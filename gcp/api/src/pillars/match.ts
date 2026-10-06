@@ -18,7 +18,7 @@ export type MatchResult = {
 
 /** Pillar C — deterministic tools + ranking (Gemini rationale later). */
 export async function matchHelpers(task: TaskRow): Promise<MatchResult> {
-  const nearby = helpersForMatch(task);
+  const nearby = await helpersForMatch(task);
   const scored = nearby
     .map(({ helper, distanceKm }) => {
       const reasons: string[] = ['Verified identity', `${distanceKm.toFixed(2)} km`];

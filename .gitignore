@@ -32,6 +32,11 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
+web-host/build/
+gcp/api/node_modules/
+gcp/api/dist/
+gcp/api/.env
+
 
 # Symbolication related
 app.*.symbols

@@ -1,0 +1,109 @@
+# Auto-deploy on push to main (and manual "Run workflow").
+#
+# Secrets → repo Settings → Secrets and variables → Actions:
+#
+#   GCP_PROJECT_ID     required — GCP project id
+#   GCP_SA_KEY         required — service account JSON key
+#   GCP_API_BASE_URL   optional — Cloud Run URL for Flutter build
+#                       (if empty, uses URL from this deploy)
+#   FIREBASE_TOKEN     optional — from `firebase login:ci`
+#   FIREBASE_PROJECT_ID optional — Firebase project (for Hosting)
+#
+# Variables (optional): GCP_REGION (default asia-south1), CLOUD_RUN_SERVICE (default zivo-api)
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+jobs:
+  deploy-api:
+    name: Deploy API → Cloud Run
+    runs-on: ubuntu-latest
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ vars.CLOUD_RUN_SERVICE || 'zivo-api' }}
+          region: ${{ vars.GCP_REGION || 'asia-south1' }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          source: gcp/api
+          flags: --allow-unauthenticated
+          env_vars: USE_MOCK_AI=true,GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},GCP_LOCATION=${{ vars.GCP_REGION || 'asia-south1' }}
+
+      - run: echo "Deployed API at ${{ steps.deploy.outputs.url }}"
+
+  deploy-web:
+    name: Deploy Web → Firebase Hosting
+    runs-on: ubuntu-latest
+    needs: deploy-api
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Firebase secrets
+        id: firebase
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+        run: |
+          if [ -n "$FIREBASE_TOKEN" ] && [ -n "$FIREBASE_PROJECT_ID" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping web deploy — set FIREBASE_TOKEN and FIREBASE_PROJECT_ID to enable."
+          fi
+
+      - if: steps.firebase.outputs.enabled == 'true'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - if: steps.firebase.outputs.enabled == 'true'
+        name: Resolve API URL
+        id: api
+        env:
+          SECRET_URL: ${{ secrets.GCP_API_BASE_URL }}
+          DEPLOY_URL: ${{ needs.deploy-api.outputs.url }}
+        run: |
+          URL="${SECRET_URL:-$DEPLOY_URL}"
+          URL="${URL%/}"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Flutter will call $URL"
+
+      - if: steps.firebase.outputs.enabled == 'true'
+        run: flutter pub get
+
+      - if: steps.firebase.outputs.enabled == 'true'
+        run: |
+          flutter build web --release \
+            --dart-define=GCP_API_BASE_URL=${{ steps.api.outputs.url }}
+
+      - if: steps.firebase.outputs.enabled == 'true'
+        run: npm install -g firebase-tools
+
+      - if: steps.firebase.outputs.enabled == 'true'
+        name: firebase deploy
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          firebase deploy --only hosting \
+            --project "${{ secrets.FIREBASE_PROJECT_ID }}" \
+            --non-interactive

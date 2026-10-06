@@ -10,7 +10,21 @@ Trusted neighborhood help — Flutter UI + **Google Cloud** backend.
 - API: Cloud Run (`gcp/api`) — auth, escrow, Gemini pillars A/B/C
 - Config: `--dart-define=GCP_API_BASE_URL=...`
 
-See [docs/GCP_DEPLOY.md](docs/GCP_DEPLOY.md).
+See [docs/GCP_DEPLOY.md](docs/GCP_DEPLOY.md), [docs/INFRA.md](docs/INFRA.md), and [docs/ZERO_COST.md](docs/ZERO_COST.md).
+
+**GCP project:** `gcp-ai-builder` · API uses **Firestore** · `USE_MOCK_AI=true` for $0 AI.
+
+### Cloud-hosted (not local)
+
+| Service | URL |
+|---------|-----|
+| **Web UI** | run `./scripts/deploy-web.sh` then open Cloud Run `zivo-web` URL |
+| **API** | https://zivo-api-ihp5vjzpsa-el.a.run.app |
+
+```bash
+export GCP_PROJECT_ID=gcp-ai-builder
+./scripts/deploy-web.sh   # Flutter → Cloud Run zivo-web
+```
 
 ## Quick start
 

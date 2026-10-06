@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -16,6 +18,7 @@ import 'package:hyperlocal/data/models/task_status.dart';
 import 'package:hyperlocal/data/repositories/profile_repository.dart';
 import 'package:hyperlocal/data/repositories/task_repository.dart';
 import 'package:hyperlocal/blocs/mode/mode_cubit.dart';
+import 'package:image_picker/image_picker.dart';
 
 /// Task creation — Uber-style category-first flow.
 /// Step 0: Pick category  →  Step 1: Describe  →  Step 2: Location  →  Step 3: Review & Post
@@ -44,6 +47,9 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
   LatLng? _pickedLocation;
   int _step = 0;
   String? _livePolicyWarning;
+  final _picker = ImagePicker();
+  final List<Uint8List> _photoBytes = [];
+  static const _maxPhotos = 5;
 
   // Sri Lankan cities
   static const _cityPresets = [
@@ -169,7 +175,66 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       _estimatedHours = 1.0;
       _hourlyRate = 700.0;
       _livePolicyWarning = null;
+      _photoBytes.clear();
     });
+  }
+
+  Future<void> _addPhotos() async {
+    if (_photoBytes.length >= _maxPhotos) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('You can add up to $_maxPhotos photos')),
+      );
+      return;
+    }
+    try {
+      final remaining = _maxPhotos - _photoBytes.length;
+      final files = await _picker.pickMultiImage(
+        imageQuality: 75,
+        maxWidth: 1600,
+      );
+      if (files.isEmpty) return;
+      final selected = files.take(remaining);
+      final bytes = <Uint8List>[];
+      for (final f in selected) {
+        bytes.add(await f.readAsBytes());
+      }
+      if (!mounted) return;
+      setState(() => _photoBytes.addAll(bytes));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not add photos: $e')),
+      );
+    }
+  }
+
+  Future<void> _addPhotoFromCamera() async {
+    if (_photoBytes.length >= _maxPhotos) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('You can add up to $_maxPhotos photos')),
+      );
+      return;
+    }
+    try {
+      final file = await _picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 75,
+        maxWidth: 1600,
+      );
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      if (!mounted) return;
+      setState(() => _photoBytes.add(bytes));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not take photo: $e')),
+      );
+    }
+  }
+
+  void _removePhoto(int index) {
+    setState(() => _photoBytes.removeAt(index));
   }
 
   void _goBack() {
@@ -340,6 +405,30 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
     final description =
         '${_descCtrl.text.trim()}${_shoppingListBlock()}';
 
+    // Upload reference photos (any category) before create.
+    final photoUrls = <String>[];
+    if (_photoBytes.isNotEmpty) {
+      try {
+        final repo = context.read<TaskRepository>();
+        for (var i = 0; i < _photoBytes.length; i++) {
+          final url = await repo.uploadTaskPhoto(
+            bytes: _photoBytes[i],
+            filename: 'task_${DateTime.now().millisecondsSinceEpoch}_$i.jpg',
+          );
+          photoUrls.add(url);
+        }
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Photo upload failed: $e'),
+            backgroundColor: AppColors.errorColor,
+          ),
+        );
+        return;
+      }
+    }
+
     final task = Task(
       id: '',
       clientId: auth.profile.id,
@@ -357,7 +446,9 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       createdAt: DateTime.now(),
       goodsBudget: _needsPurchaseTrust ? _goodsBudget : 0,
       requiresPurchaseProof: _needsPurchaseTrust,
+      photoUrls: photoUrls,
     );
+    if (!mounted) return;
     context.read<TaskBloc>().add(TaskCreate(task));
   }
 
@@ -655,6 +746,101 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
               ),
               validator: (v) =>
                   (v?.trim().isEmpty ?? true) ? 'Please add details' : null,
+            ),
+
+            const Gap(18),
+            _FieldLabel('Photos (optional · all categories)'),
+            const Gap(8),
+            Text(
+              'Add up to $_maxPhotos photos so helpers see the place, items, or context.',
+              style: AppTextStyles.bodySmall
+                  .copyWith(color: AppColors.textMuted, fontSize: 11),
+            ),
+            const Gap(10),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                ...List.generate(_photoBytes.length, (i) {
+                  return Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.memory(
+                          _photoBytes[i],
+                          width: 88,
+                          height: 88,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                      Positioned(
+                        top: -6,
+                        right: -6,
+                        child: InkWell(
+                          onTap: () => _removePhoto(i),
+                          child: Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: const BoxDecoration(
+                              color: AppColors.errorColor,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.close, size: 14, color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                }),
+                if (_photoBytes.length < _maxPhotos)
+                  OutlinedButton(
+                    onPressed: _addPhotos,
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(88, 88),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      side: BorderSide(color: color.withValues(alpha: 0.45)),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.add_photo_alternate_outlined,
+                            color: color, size: 22),
+                        const Gap(4),
+                        Text(
+                          'Gallery',
+                          style: AppTextStyles.bodySmall
+                              .copyWith(color: color, fontSize: 10),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (_photoBytes.length < _maxPhotos)
+                  OutlinedButton(
+                    onPressed: _addPhotoFromCamera,
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(88, 88),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      side: BorderSide(color: color.withValues(alpha: 0.45)),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.photo_camera_outlined,
+                            color: color, size: 22),
+                        const Gap(4),
+                        Text(
+                          'Camera',
+                          style: AppTextStyles.bodySmall
+                              .copyWith(color: color, fontSize: 10),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
             ),
 
             if (_livePolicyWarning != null) ...[
@@ -1063,6 +1249,12 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                 _ReviewRow('Helper labor (90%)',
                     AppConfig.money(helperEarns),
                     color: AppColors.helperAccent),
+                _ReviewRow(
+                  'Photos',
+                  _photoBytes.isEmpty
+                      ? 'None'
+                      : '${_photoBytes.length} attached',
+                ),
                 const Gap(6),
                 Text(
                   _needsPurchaseTrust

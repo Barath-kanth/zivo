@@ -11,6 +11,7 @@ import {
   completeTask,
   createSession,
   createTask,
+  dbMode,
   getTask,
   getUser,
   issuePhoneOtp,
@@ -29,15 +30,15 @@ import {
   verifyPhoneOtp,
   PLATFORM_FEE_PERCENT,
 } from './store.js';
+import { uploadTaskPhoto, uploadsConfigured } from './uploads.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8_000_000 } });
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
-seedDemo();
 
-function requireUser(req: express.Request): string {
-  const id = userIdFromAuthHeader(req.header('authorization') ?? undefined);
+async function requireUser(req: express.Request): Promise<string> {
+  const id = await userIdFromAuthHeader(req.header('authorization') ?? undefined);
   if (!id) throw new Error('Unauthorized');
   return id;
 }
@@ -45,7 +46,7 @@ function requireUser(req: express.Request): string {
 app.get('/', (_req, res) => {
   res.type('html').send(`<!doctype html><html><body style="font-family:system-ui;padding:2rem">
   <h1>Zivo GCP API</h1>
-  <p>Cloud Run backend for Flutter Zivo · <a href="/health">/health</a></p>
+  <p>Cloud Run + Firestore (free tier) · <a href="/health">/health</a></p>
   </body></html>`);
 });
 
@@ -55,35 +56,37 @@ app.get('/health', (_req, res) => {
     service: 'zivo-gcp-api',
     feePercent: PLATFORM_FEE_PERCENT,
     stack: 'google-cloud',
+    db: dbMode(),
+    mockAi: (process.env.USE_MOCK_AI ?? 'true').toLowerCase() !== 'false',
+    uploads: uploadsConfigured(),
   });
 });
 
-app.post('/auth/otp/request', (req, res) => {
+app.post('/auth/otp/request', async (req, res) => {
   const body = z.object({ phone: z.string().min(8) }).safeParse(req.body);
   if (!body.success) return res.status(400).json({ error: body.error.flatten() });
-  const code = issuePhoneOtp(body.data.phone);
+  const code = await issuePhoneOtp(body.data.phone);
   res.json({
     ok: true,
-    // Cup demo: return code when USE_MOCK_AI / local (no SMS vendor)
     issuedCode: process.env.EXPOSE_OTP === 'false' ? undefined : code,
-    message: 'OTP issued via GCP API (no TextBee/Supabase)',
+    message: 'OTP issued via GCP API (no SMS vendor)',
   });
 });
 
-app.post('/auth/otp/verify', (req, res) => {
+app.post('/auth/otp/verify', async (req, res) => {
   try {
     const body = z
       .object({ phone: z.string(), token: z.string().min(4) })
       .parse(req.body);
-    const user = verifyPhoneOtp(body.phone, body.token);
-    const accessToken = createSession(user.id);
+    const user = await verifyPhoneOtp(body.phone, body.token);
+    const accessToken = await createSession(user.id);
     res.json({ accessToken, user: publicProfile(user) });
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'OTP failed' });
   }
 });
 
-app.post('/auth/signup', (req, res) => {
+app.post('/auth/signup', async (req, res) => {
   try {
     const body = z
       .object({
@@ -92,31 +95,31 @@ app.post('/auth/signup', (req, res) => {
         full_name: z.string().min(1),
       })
       .parse(req.body);
-    const user = signUpEmail(body);
-    const accessToken = createSession(user.id);
+    const user = await signUpEmail(body);
+    const accessToken = await createSession(user.id);
     res.status(201).json({ accessToken, user: publicProfile(user) });
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'Signup failed' });
   }
 });
 
-app.post('/auth/signin', (req, res) => {
+app.post('/auth/signin', async (req, res) => {
   try {
     const body = z
       .object({ email: z.string().email(), password: z.string() })
       .parse(req.body);
-    const user = signInEmail(body.email, body.password);
-    const accessToken = createSession(user.id);
+    const user = await signInEmail(body.email, body.password);
+    const accessToken = await createSession(user.id);
     res.json({ accessToken, user: publicProfile(user) });
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'Sign-in failed' });
   }
 });
 
-app.get('/me', (req, res) => {
+app.get('/me', async (req, res) => {
   try {
-    const id = requireUser(req);
-    const user = getUser(id);
+    const id = await requireUser(req);
+    const user = await getUser(id);
     if (!user) return res.status(404).json({ error: 'Not found' });
     res.json({ user: publicProfile(user) });
   } catch (e) {
@@ -124,10 +127,10 @@ app.get('/me', (req, res) => {
   }
 });
 
-app.patch('/me', (req, res) => {
+app.patch('/me', async (req, res) => {
   try {
-    const id = requireUser(req);
-    const user = getUser(id);
+    const id = await requireUser(req);
+    const user = await getUser(id);
     if (!user) return res.status(404).json({ error: 'Not found' });
     const patch = req.body as Record<string, unknown>;
     const next = {
@@ -145,45 +148,67 @@ app.patch('/me', (req, res) => {
         ? { helper_skills: patch.helper_skills.map(String) }
         : {}),
     };
-    res.json({ user: upsertUser(next) });
+    res.json({ user: await upsertUser(next) });
   } catch (e) {
     res.status(401).json({ error: e instanceof Error ? e.message : 'Unauthorized' });
   }
 });
 
-app.post('/me/helper', (req, res) => {
+app.post('/me/helper', async (req, res) => {
   try {
-    const id = requireUser(req);
+    const id = await requireUser(req);
     const active = z.object({ active: z.boolean() }).parse(req.body).active;
-    res.json({ user: publicProfile(setHelperActive(id, active)) });
+    res.json({ user: publicProfile(await setHelperActive(id, active)) });
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'Failed' });
   }
 });
 
-app.post('/wallet/topup', (req, res) => {
+app.post('/wallet/topup', async (req, res) => {
   try {
-    const id = requireUser(req);
+    const id = await requireUser(req);
     const amount = z.object({ amount: z.number().positive() }).parse(req.body).amount;
-    res.json({ user: publicProfile(topUp(id, amount)) });
+    res.json({ user: publicProfile(await topUp(id, amount)) });
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'Top-up failed' });
   }
 });
 
-app.get('/wallet/ledger', (req, res) => {
+app.get('/wallet/ledger', async (req, res) => {
   try {
-    const id = requireUser(req);
-    res.json({ entries: listLedger(id) });
+    const id = await requireUser(req);
+    res.json({ entries: await listLedger(id) });
   } catch (e) {
     res.status(401).json({ error: e instanceof Error ? e.message : 'Unauthorized' });
   }
 });
 
-app.get('/helpers', (_req, res) => {
+app.get('/helpers', async (_req, res) => {
+  const users = await listUsers();
   res.json({
-    helpers: listUsers().filter((u) => u.is_helper_active && u.kyc_status === 'verified'),
+    helpers: users.filter((u) => u.is_helper_active && u.kyc_status === 'verified'),
   });
+});
+
+/** Task photos for any category — stored in GCS (free-tier bucket). */
+app.post('/uploads/photo', upload.single('photo'), async (req, res) => {
+  try {
+    const userId = await requireUser(req);
+    if (!req.file?.buffer?.length) {
+      return res.status(400).json({ error: 'photo file required' });
+    }
+    if (!uploadsConfigured()) {
+      return res.status(503).json({ error: 'Uploads not configured on this environment' });
+    }
+    const result = await uploadTaskPhoto({
+      bytes: req.file.buffer,
+      contentType: req.file.mimetype,
+      userId,
+    });
+    res.status(201).json(result);
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'Upload failed' });
+  }
 });
 
 app.post('/tasks/safety-check', async (req, res) => {
@@ -200,7 +225,7 @@ app.post('/tasks/safety-check', async (req, res) => {
 
 app.post('/tasks', async (req, res) => {
   try {
-    const userId = requireUser(req);
+    const userId = await requireUser(req);
     const body = z
       .object({
         title: z.string().min(1),
@@ -213,6 +238,7 @@ app.post('/tasks', async (req, res) => {
         lon: z.number(),
         location_address: z.string().optional(),
         location_label: z.string().optional(),
+        photo_urls: z.array(z.string().min(8)).max(5).optional(),
       })
       .parse(req.body);
 
@@ -224,38 +250,38 @@ app.post('/tasks', async (req, res) => {
       return res.status(422).json({ error: 'Task blocked by safety policy', safety });
     }
 
-    const task = createTask({ ...body, client_id: userId });
+    const task = await createTask({ ...body, client_id: userId });
     res.status(201).json({ task, safety });
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'Create failed' });
   }
 });
 
-app.get('/tasks/mine', (req, res) => {
+app.get('/tasks/mine', async (req, res) => {
   try {
-    const id = requireUser(req);
-    res.json({ tasks: listClientTasks(id) });
+    const id = await requireUser(req);
+    res.json({ tasks: await listClientTasks(id) });
   } catch (e) {
     res.status(401).json({ error: e instanceof Error ? e.message : 'Unauthorized' });
   }
 });
 
-app.get('/tasks/open', (req, res) => {
+app.get('/tasks/open', async (req, res) => {
   const lat = Number(req.query.lat ?? 6.9271);
   const lng = Number(req.query.lng ?? 79.8612);
-  res.json({ tasks: listOpenTasks(lat, lng) });
+  res.json({ tasks: await listOpenTasks(lat, lng) });
 });
 
-app.get('/tasks/:id', (req, res) => {
-  const task = getTask(String(req.params.id));
+app.get('/tasks/:id', async (req, res) => {
+  const task = await getTask(String(req.params.id));
   if (!task) return res.status(404).json({ error: 'Not found' });
   res.json({ task });
 });
 
-app.post('/tasks/:id/accept', (req, res) => {
+app.post('/tasks/:id/accept', async (req, res) => {
   try {
-    const helperId = requireUser(req);
-    const task = acceptTask(String(req.params.id), helperId);
+    const helperId = await requireUser(req);
+    const task = await acceptTask(String(req.params.id), helperId);
     res.json({ task });
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'Accept failed' });
@@ -263,13 +289,13 @@ app.post('/tasks/:id/accept', (req, res) => {
 });
 
 app.post('/tasks/:id/match', async (req, res) => {
-  const task = getTask(String(req.params.id));
+  const task = await getTask(String(req.params.id));
   if (!task) return res.status(404).json({ error: 'Not found' });
   res.json(await matchHelpers(task));
 });
 
 app.post('/tasks/:id/receipt', upload.single('receipt'), async (req, res) => {
-  const task = getTask(String(req.params.id));
+  const task = await getTask(String(req.params.id));
   if (!task) return res.status(404).json({ error: 'Not found' });
   const shoppingList = String(req.body.shoppingList ?? '');
   res.json(
@@ -301,7 +327,7 @@ app.post('/tasks/:id/receipt', upload.single('receipt'), async (req, res) => {
   );
 });
 
-app.post('/tasks/:id/complete', (req, res) => {
+app.post('/tasks/:id/complete', async (req, res) => {
   try {
     const body = z
       .object({
@@ -309,15 +335,23 @@ app.post('/tasks/:id/complete', (req, res) => {
         receipt_total_lkr: z.number().nonnegative().default(0),
       })
       .parse(req.body);
-    res.json(completeTask(String(req.params.id), body));
+    res.json(await completeTask(String(req.params.id), body));
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'Complete failed' });
   }
 });
 
 const port = Number(process.env.PORT || 8080);
-app.listen(port, () => {
-  console.log(
-    `zivo-gcp-api :${port} USE_MOCK_AI=${process.env.USE_MOCK_AI ?? 'true'}`,
-  );
-});
+
+seedDemo()
+  .then(() => {
+    app.listen(port, () => {
+      console.log(
+        `zivo-gcp-api :${port} db=${dbMode()} USE_MOCK_AI=${process.env.USE_MOCK_AI ?? 'true'}`,
+      );
+    });
+  })
+  .catch((err) => {
+    console.error('Firestore seed failed', err);
+    process.exit(1);
+  });

@@ -160,6 +160,7 @@ class Task extends Equatable {
     this.disputedAt,
     this.disputeReason,
     this.storeName,
+    this.photoUrls = const [],
   });
 
   final String id;
@@ -198,6 +199,9 @@ class Task extends Equatable {
   final DateTime? disputedAt;
   final String? disputeReason;
   final String? storeName;
+
+  /// Reference photos attached at create time (all categories).
+  final List<String> photoUrls;
 
   bool get isPurchaseTask =>
       category == TaskCategory.groceryRun ||
@@ -279,6 +283,10 @@ class Task extends Equatable {
                               : null,
       disputeReason:        json['dispute_reason'] as String?,
       storeName:            json['store_name'] as String?,
+      photoUrls:            (json['photo_urls'] as List?)
+                              ?.map((e) => e.toString())
+                              .toList() ??
+                          const [],
     );
   }
 
@@ -313,6 +321,7 @@ class Task extends Equatable {
     DateTime? proofSubmittedAt,
     DateTime? clientConfirmedDeliveryAt,
     String? disputeReason,
+    List<String>? photoUrls,
   }) {
     return Task(
       id: id,
@@ -349,6 +358,7 @@ class Task extends Equatable {
       disputedAt: disputedAt,
       disputeReason: disputeReason ?? this.disputeReason,
       storeName: storeName,
+      photoUrls: photoUrls ?? this.photoUrls,
     );
   }
 

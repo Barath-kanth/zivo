@@ -59,13 +59,22 @@ class TaskRepository {
       'lon': loc.longitude,
       'location_address': task.locationAddress,
       'location_label': task.locationLabel,
+      if (task.photoUrls.isNotEmpty) 'photo_urls': task.photoUrls,
     });
 
     final created = Task.fromJson(Map<String, dynamic>.from(data['task'] as Map));
     return created.copyWith(
       goodsBudget: task.goodsBudget,
       requiresPurchaseProof: task.goodsBudget > 0 || task.isPurchaseTask,
+      photoUrls: task.photoUrls.isNotEmpty ? task.photoUrls : created.photoUrls,
     );
+  }
+
+  Future<String> uploadTaskPhoto({
+    required List<int> bytes,
+    String filename = 'photo.jpg',
+  }) {
+    return _api.uploadTaskPhoto(bytes: bytes, filename: filename);
   }
 
   Future<List<Task>> getClientTasks(String clientId) async {

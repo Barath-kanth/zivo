@@ -1,5 +1,10 @@
 import { randomUUID } from 'crypto';
-import { DISPATCH_RADIUS_KM, PLATFORM_FEE_PERCENT } from './config.js';
+import { Firestore, FieldValue } from '@google-cloud/firestore';
+import {
+  DISPATCH_RADIUS_KM,
+  PLATFORM_FEE_PERCENT,
+  gcpProjectId,
+} from './config.js';
 
 export type Skill = 'none' | 'driving' | 'care' | 'tutoring';
 
@@ -51,6 +56,7 @@ export type TaskRow = {
   end_otp?: string;
   confirm_code?: string;
   created_at: string;
+  photo_urls?: string[];
   helper?: { full_name: string; avatar_url?: string; rating_as_helper: number };
 };
 
@@ -68,11 +74,33 @@ export type LedgerEntry = {
 type Session = { token: string; userId: string; expiresAt: number };
 type OtpRecord = { code: string; phone: string; expiresAt: number };
 
-const users = new Map<string, UserProfile>();
-const tasks = new Map<string, TaskRow>();
-const ledger: LedgerEntry[] = [];
-const sessions = new Map<string, Session>();
-const otps = new Map<string, OtpRecord>();
+/** Free-tier Firestore (Native). No Cloud SQL. */
+const useMemory =
+  (process.env.USE_MEMORY_STORE ?? 'false').toLowerCase() === 'true' ||
+  !gcpProjectId ||
+  gcpProjectId === 'your-gcp-project-id';
+
+let db: Firestore | null = null;
+function firestore(): Firestore {
+  if (!db) {
+    db = new Firestore({
+      projectId: gcpProjectId,
+      ignoreUndefinedProperties: true,
+    });
+  }
+  return db;
+}
+
+// In-memory fallback for local-only runs without GCP credentials.
+const memUsers = new Map<string, UserProfile>();
+const memTasks = new Map<string, TaskRow>();
+const memLedger: LedgerEntry[] = [];
+const memSessions = new Map<string, Session>();
+const memOtps = new Map<string, OtpRecord>();
+
+export function dbMode(): 'firestore' | 'memory' {
+  return useMemory ? 'memory' : 'firestore';
+}
 
 function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
   const R = 6371;
@@ -86,8 +114,63 @@ function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: num
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-export function seedDemo() {
-  if (users.size) return;
+function otpDocId(phone: string) {
+  return phone.replace(/[^\d+]/g, '').replace(/\+/g, 'p');
+}
+
+function stripPassword(u: UserProfile) {
+  const { password_hash: _, ...rest } = u;
+  return rest;
+}
+
+async function saveUser(u: UserProfile) {
+  if (useMemory) {
+    memUsers.set(u.id, u);
+    return;
+  }
+  await firestore().collection('users').doc(u.id).set(u, { merge: true });
+}
+
+async function loadUser(id: string): Promise<UserProfile | undefined> {
+  if (useMemory) return memUsers.get(id);
+  const snap = await firestore().collection('users').doc(id).get();
+  return snap.exists ? (snap.data() as UserProfile) : undefined;
+}
+
+async function allUsers(): Promise<UserProfile[]> {
+  if (useMemory) return [...memUsers.values()];
+  const snap = await firestore().collection('users').get();
+  return snap.docs.map((d) => d.data() as UserProfile);
+}
+
+async function saveTask(t: TaskRow) {
+  if (useMemory) {
+    memTasks.set(t.id, t);
+    return;
+  }
+  await firestore().collection('tasks').doc(t.id).set(t, { merge: true });
+}
+
+async function loadTask(id: string): Promise<TaskRow | undefined> {
+  if (useMemory) return memTasks.get(id);
+  const snap = await firestore().collection('tasks').doc(id).get();
+  return snap.exists ? (snap.data() as TaskRow) : undefined;
+}
+
+async function allTasks(): Promise<TaskRow[]> {
+  if (useMemory) return [...memTasks.values()];
+  const snap = await firestore().collection('tasks').get();
+  return snap.docs.map((d) => d.data() as TaskRow);
+}
+
+export async function seedDemo() {
+  if (useMemory) {
+    if (memUsers.size) return;
+  } else {
+    const meta = await firestore().collection('meta').doc('seed').get();
+    if (meta.exists) return;
+  }
+
   const demoHelpers: Array<Partial<UserProfile> & { id: string; full_name: string }> = [
     {
       id: 'h1',
@@ -116,8 +199,9 @@ export function seedDemo() {
       wallet_balance: 2000,
     },
   ];
+
   for (const h of demoHelpers) {
-    users.set(h.id, {
+    await saveUser({
       id: h.id,
       full_name: h.full_name,
       is_helper_active: h.is_helper_active ?? false,
@@ -136,61 +220,90 @@ export function seedDemo() {
       phone_verified_at: new Date().toISOString(),
     });
   }
+
+  if (!useMemory) {
+    await firestore().collection('meta').doc('seed').set({
+      at: FieldValue.serverTimestamp(),
+      note: 'Zivo free-tier Firestore seed',
+    });
+  }
 }
 
-export function createSession(userId: string): string {
+export async function createSession(userId: string): Promise<string> {
   const token = randomUUID();
-  sessions.set(token, {
+  const session: Session = {
     token,
     userId,
     expiresAt: Date.now() + 7 * 24 * 3600_000,
-  });
+  };
+  if (useMemory) {
+    memSessions.set(token, session);
+  } else {
+    await firestore().collection('sessions').doc(token).set(session);
+  }
   return token;
 }
 
-export function userIdFromAuthHeader(header?: string): string | null {
+export async function userIdFromAuthHeader(header?: string): Promise<string | null> {
   if (!header?.startsWith('Bearer ')) return null;
   const token = header.slice(7);
-  const s = sessions.get(token);
-  if (!s || s.expiresAt < Date.now()) return null;
+  if (useMemory) {
+    const s = memSessions.get(token);
+    if (!s || s.expiresAt < Date.now()) return null;
+    return s.userId;
+  }
+  const snap = await firestore().collection('sessions').doc(token).get();
+  if (!snap.exists) return null;
+  const s = snap.data() as Session;
+  if (s.expiresAt < Date.now()) return null;
   return s.userId;
 }
 
-export function getUser(id: string) {
-  return users.get(id);
+export async function getUser(id: string) {
+  return loadUser(id);
 }
 
-export function listUsers() {
-  return [...users.values()].map((u) => {
-    const { password_hash: _, ...rest } = u;
-    return rest;
-  });
+export async function listUsers() {
+  return (await allUsers()).map(stripPassword);
 }
 
-export function upsertUser(profile: UserProfile) {
-  users.set(profile.id, profile);
-  const { password_hash: _, ...rest } = profile;
-  return rest;
+export async function upsertUser(profile: UserProfile) {
+  await saveUser(profile);
+  return stripPassword(profile);
 }
 
 export function publicProfile(u: UserProfile) {
-  const { password_hash: _, ...rest } = u;
-  return rest;
+  return stripPassword(u);
 }
 
-export function issuePhoneOtp(phone: string): string {
+export async function issuePhoneOtp(phone: string): Promise<string> {
   const code = String(Math.floor(100000 + Math.random() * 900000));
-  otps.set(phone, { code, phone, expiresAt: Date.now() + 10 * 60_000 });
+  const rec: OtpRecord = { code, phone, expiresAt: Date.now() + 10 * 60_000 };
+  if (useMemory) {
+    memOtps.set(phone, rec);
+  } else {
+    await firestore().collection('otps').doc(otpDocId(phone)).set(rec);
+  }
   return code;
 }
 
-export function verifyPhoneOtp(phone: string, token: string): UserProfile {
-  const rec = otps.get(phone);
+export async function verifyPhoneOtp(phone: string, token: string): Promise<UserProfile> {
+  let rec: OtpRecord | undefined;
+  if (useMemory) {
+    rec = memOtps.get(phone);
+    if (rec) memOtps.delete(phone);
+  } else {
+    const ref = firestore().collection('otps').doc(otpDocId(phone));
+    const snap = await ref.get();
+    rec = snap.exists ? (snap.data() as OtpRecord) : undefined;
+    if (snap.exists) await ref.delete();
+  }
   if (!rec || rec.expiresAt < Date.now() || rec.code !== token) {
     throw new Error('Invalid or expired OTP');
   }
-  otps.delete(phone);
-  let user = [...users.values()].find((u) => u.phone === phone);
+
+  const users = await allUsers();
+  let user = users.find((u) => u.phone === phone);
   if (!user) {
     const id = randomUUID();
     user = {
@@ -211,21 +324,22 @@ export function verifyPhoneOtp(phone: string, token: string): UserProfile {
       role_intent: 'client',
       guidelines_accepted_at: new Date().toISOString(),
     };
-    users.set(id, user);
   } else {
-    user.phone_verified_at = new Date().toISOString();
-    users.set(user.id, user);
+    user = { ...user, phone_verified_at: new Date().toISOString() };
   }
+  await saveUser(user);
   return user;
 }
 
-export function signUpEmail(input: {
+export async function signUpEmail(input: {
   email: string;
   password: string;
   full_name: string;
-}): UserProfile {
-  const existing = [...users.values()].find((u) => u.email === input.email);
-  if (existing) throw new Error('Email already registered');
+}): Promise<UserProfile> {
+  const users = await allUsers();
+  if (users.find((u) => u.email === input.email)) {
+    throw new Error('Email already registered');
+  }
   const id = randomUUID();
   const user: UserProfile = {
     id,
@@ -246,19 +360,20 @@ export function signUpEmail(input: {
     role_intent: 'client',
     guidelines_accepted_at: new Date().toISOString(),
   };
-  users.set(id, user);
+  await saveUser(user);
   return user;
 }
 
-export function signInEmail(email: string, password: string): UserProfile {
-  const user = [...users.values()].find((u) => u.email === email);
+export async function signInEmail(email: string, password: string): Promise<UserProfile> {
+  const users = await allUsers();
+  const user = users.find((u) => u.email === email);
   if (!user || user.password_hash !== password) {
     throw new Error('Invalid email or password');
   }
   return user;
 }
 
-export function createTask(input: {
+export async function createTask(input: {
   client_id: string;
   title: string;
   description: string;
@@ -270,8 +385,9 @@ export function createTask(input: {
   lon: number;
   location_address?: string;
   location_label?: string;
-}): TaskRow {
-  const client = users.get(input.client_id);
+  photo_urls?: string[];
+}): Promise<TaskRow> {
+  const client = await loadUser(input.client_id);
   if (!client) throw new Error('Client not found');
   if (client.kyc_status !== 'verified') {
     throw new Error('KYC verification required to post tasks');
@@ -284,7 +400,7 @@ export function createTask(input: {
   client.wallet_balance -= hold;
   client.escrow_balance += hold;
   client.total_tasks_posted += 1;
-  users.set(client.id, client);
+  await saveUser(client);
 
   const id = `task_${Date.now()}`;
   const confirm = String(Math.floor(1000 + Math.random() * 9000));
@@ -310,24 +426,25 @@ export function createTask(input: {
     end_otp: endOtp,
     confirm_code: confirm,
     created_at: new Date().toISOString(),
+    photo_urls: input.photo_urls?.filter(Boolean).slice(0, 5) ?? [],
   };
-  tasks.set(id, row);
-  addLedger(client.id, id, 'escrow_hold', -hold, client.wallet_balance, 'Escrow hold');
+  await saveTask(row);
+  await addLedger(client.id, id, 'escrow_hold', -hold, client.wallet_balance, 'Escrow hold');
   return row;
 }
 
-export function getTask(id: string) {
-  return tasks.get(id);
+export async function getTask(id: string) {
+  return loadTask(id);
 }
 
-export function listClientTasks(clientId: string) {
-  return [...tasks.values()]
+export async function listClientTasks(clientId: string) {
+  return (await allTasks())
     .filter((t) => t.client_id === clientId)
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
-export function listOpenTasks(helperLat: number, helperLng: number) {
-  return [...tasks.values()]
+export async function listOpenTasks(helperLat: number, helperLng: number) {
+  return (await allTasks())
     .filter((t) => t.status === 'open')
     .map((t) => ({
       ...t,
@@ -340,9 +457,9 @@ export function listOpenTasks(helperLat: number, helperLng: number) {
     .sort((a, b) => a.distance_km - b.distance_km);
 }
 
-export function acceptTask(taskId: string, helperId: string) {
-  const task = tasks.get(taskId);
-  const helper = users.get(helperId);
+export async function acceptTask(taskId: string, helperId: string) {
+  const task = await loadTask(taskId);
+  const helper = await loadUser(helperId);
   if (!task) throw new Error('Task not found');
   if (!helper) throw new Error('Helper not found');
   if (helper.kyc_status !== 'verified') throw new Error('Helper must be KYC verified');
@@ -355,20 +472,20 @@ export function acceptTask(taskId: string, helperId: string) {
     avatar_url: helper.avatar_url,
     rating_as_helper: helper.rating_as_helper,
   };
-  tasks.set(taskId, task);
+  await saveTask(task);
   return task;
 }
 
-export function completeTask(
+export async function completeTask(
   taskId: string,
   input: { confirm_code: string; receipt_total_lkr: number },
 ) {
-  const task = tasks.get(taskId);
+  const task = await loadTask(taskId);
   if (!task) throw new Error('Task not found');
   if (input.confirm_code !== task.confirm_code && input.confirm_code !== task.end_otp) {
     throw new Error('Invalid confirm / End OTP');
   }
-  const client = users.get(task.client_id);
+  const client = await loadUser(task.client_id);
   if (!client) throw new Error('Client missing');
   const labor = task.total_amount;
   const goods = Math.min(input.receipt_total_lkr, task.goods_budget);
@@ -378,21 +495,28 @@ export function completeTask(
 
   client.escrow_balance -= labor + task.goods_budget;
   client.wallet_balance += unused;
-  users.set(client.id, client);
+  await saveUser(client);
 
   if (task.helper_id) {
-    const helper = users.get(task.helper_id);
+    const helper = await loadUser(task.helper_id);
     if (helper) {
       helper.wallet_balance += helperPay + goods;
       helper.helper_earnings += helperPay + goods;
       helper.total_tasks_helped += 1;
-      users.set(helper.id, helper);
-      addLedger(helper.id, taskId, 'release', helperPay + goods, helper.wallet_balance, 'Escrow release');
+      await saveUser(helper);
+      await addLedger(
+        helper.id,
+        taskId,
+        'release',
+        helperPay + goods,
+        helper.wallet_balance,
+        'Escrow release',
+      );
     }
   }
-  addLedger(client.id, taskId, 'release', unused, client.wallet_balance, 'Unused goods returned');
+  await addLedger(client.id, taskId, 'release', unused, client.wallet_balance, 'Unused goods returned');
   task.status = 'completed';
-  tasks.set(taskId, task);
+  await saveTask(task);
   return {
     task,
     ledger: {
@@ -405,17 +529,17 @@ export function completeTask(
   };
 }
 
-export function topUp(userId: string, amount: number) {
-  const u = users.get(userId);
+export async function topUp(userId: string, amount: number) {
+  const u = await loadUser(userId);
   if (!u) throw new Error('User not found');
   u.wallet_balance += amount;
-  users.set(userId, u);
-  addLedger(userId, undefined, 'topup', amount, u.wallet_balance, 'Wallet top-up (GCP demo)');
+  await saveUser(u);
+  await addLedger(userId, undefined, 'topup', amount, u.wallet_balance, 'Wallet top-up (GCP demo)');
   return u;
 }
 
-export function setHelperActive(userId: string, active: boolean) {
-  const u = users.get(userId);
+export async function setHelperActive(userId: string, active: boolean) {
+  const u = await loadUser(userId);
   if (!u) throw new Error('User not found');
   if (active && u.kyc_status !== 'verified') {
     throw new Error('KYC verification required for helper mode');
@@ -424,11 +548,11 @@ export function setHelperActive(userId: string, active: boolean) {
     u.guidelines_accepted_at = new Date().toISOString();
   }
   u.is_helper_active = active;
-  users.set(userId, u);
+  await saveUser(u);
   return u;
 }
 
-function addLedger(
+async function addLedger(
   userId: string,
   taskId: string | undefined,
   entryType: string,
@@ -436,7 +560,7 @@ function addLedger(
   balanceAfter: number,
   description: string,
 ) {
-  ledger.push({
+  const entry: LedgerEntry = {
     id: randomUUID(),
     user_id: userId,
     task_id: taskId,
@@ -445,17 +569,31 @@ function addLedger(
     balance_after: balanceAfter,
     description,
     created_at: new Date().toISOString(),
-  });
+  };
+  if (useMemory) {
+    memLedger.push(entry);
+  } else {
+    await firestore().collection('ledger').doc(entry.id).set(entry);
+  }
 }
 
-export function listLedger(userId: string) {
-  return ledger
-    .filter((e) => e.user_id === userId)
+export async function listLedger(userId: string) {
+  if (useMemory) {
+    return memLedger
+      .filter((e) => e.user_id === userId)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }
+  const snap = await firestore()
+    .collection('ledger')
+    .where('user_id', '==', userId)
+    .get();
+  return snap.docs
+    .map((d) => d.data() as LedgerEntry)
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
-export function helpersForMatch(task: TaskRow) {
-  return [...users.values()]
+export async function helpersForMatch(task: TaskRow) {
+  return (await allUsers())
     .filter((u) => u.is_helper_active && u.kyc_status === 'verified')
     .map((u) => ({
       helper: u,
