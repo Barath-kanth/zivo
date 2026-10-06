@@ -214,7 +214,14 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
       return;
     }
     try {
-      final createdTask = await _taskRepository.createTask(event.task);
+      final createdTask = await _taskRepository.createTask(
+        event.task,
+        deadlineAt: event.deadlineAt,
+        clientBoostLkr: event.clientBoostLkr,
+        travelKm: event.travelKm,
+        urgency: event.urgency,
+        contextFields: event.contextFields,
+      );
       _localNearbyTasks.insert(0, createdTask);
       emit(TaskCreated(createdTask));
       // Keep helper Jobs feed in sync when the same device switches modes.

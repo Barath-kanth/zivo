@@ -14,6 +14,7 @@ import 'package:hyperlocal/core/router/app_router.dart';
 import 'package:hyperlocal/core/utils/auth_gate.dart';
 import 'package:hyperlocal/data/models/task.dart';
 import 'package:hyperlocal/data/models/task_status.dart';
+import 'package:hyperlocal/data/repositories/task_repository.dart';
 import 'package:hyperlocal/ui/_shared/zivo_logo.dart';
 import 'package:hyperlocal/ui/_shared/task_status_badge.dart';
 import 'package:hyperlocal/blocs/mode/mode_cubit.dart';
@@ -28,11 +29,15 @@ class ClientHomeScreen extends StatefulWidget {
 
 class _ClientHomeScreenState extends State<ClientHomeScreen> {
   Timer? _refreshTimer;
+  List<Map<String, dynamic>> _streetBatches = const [];
+  List<Map<String, dynamic>> _liveHelpers = const [];
 
   @override
   void initState() {
     super.initState();
     _refreshClientTasks(silent: false);
+    _refreshStreetBatches();
+    _refreshLiveHelpers();
     // Quiet poll only while a job needs Start/End OTP (no full-page flash).
     _refreshTimer = Timer.periodic(const Duration(seconds: 12), (_) {
       final bloc = context.read<TaskBloc>();
@@ -43,6 +48,8 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
             t.status == TaskStatus.inProgress,
       );
       if (needsOtp) _refreshClientTasks(silent: true);
+      _refreshStreetBatches();
+      _refreshLiveHelpers();
     });
   }
 
@@ -50,6 +57,44 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   void dispose() {
     _refreshTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _refreshStreetBatches() async {
+    try {
+      final res = await context.read<TaskRepository>().listStreetBatches(
+            lat: 6.9271,
+            lon: 79.8612,
+          );
+      if (!mounted) return;
+      final offers = (res['offers'] as List?) ?? const [];
+      setState(() {
+        _streetBatches = offers
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      });
+    } catch (_) {
+      /* ignore — banner optional */
+    }
+  }
+
+  Future<void> _refreshLiveHelpers() async {
+    try {
+      final res = await context.read<TaskRepository>().listLiveHelpers(
+            lat: 6.9271,
+            lon: 79.8612,
+          );
+      if (!mounted) return;
+      final helpers = (res['helpers'] as List?) ?? const [];
+      setState(() {
+        _liveHelpers = helpers
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      });
+    } catch (_) {
+      /* optional */
+    }
   }
 
   void _refreshClientTasks({bool silent = false}) {
@@ -96,6 +141,9 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
         slivers: [
           _buildHeader(),
           _buildSearchBar(),
+          _buildInstantDispatchCard(),
+          _buildStreetBatchCard(),
+          _buildNeighborVouchCard(),
           _buildSectionTitle('What do you need help with?'),
           _buildCategoryGrid(),
           _buildSectionTitle('Your Active Requests'),
@@ -441,6 +489,781 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
         ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.08),
       ),
     );
+  }
+
+  Widget _buildInstantDispatchCard() {
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+        child: Material(
+          color: AppColors.cardDark,
+          borderRadius: BorderRadius.circular(16),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: _runInstantDispatch,
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.accent.withValues(alpha: 0.35)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: AppColors.accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.bolt_rounded,
+                        color: AppColors.accent),
+                  ),
+                  const Gap(12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Instant Dispatch',
+                          style: AppTextStyles.headingSmall.copyWith(fontSize: 14),
+                        ),
+                        Text(
+                          'Algorithmic price · AI dispatch ≤500 m · no bargaining',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textMuted,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right_rounded,
+                      color: AppColors.textMuted),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _runInstantDispatch() async {
+    if (!await requireAuth(context, returnTo: AppRoutes.shell)) return;
+    if (!mounted) return;
+    if (!await requireVerified(context, returnTo: AppRoutes.shell)) return;
+    if (!mounted) return;
+
+    final titleCtrl = TextEditingController(text: 'Quick help nearby');
+    final descCtrl = TextEditingController(
+      text:
+          'Need someone for about 15 minutes at my place — describe the full situation here.',
+    );
+    final boostCtrl = TextEditingController();
+    var urgency = 'urgent';
+    var category = 'errandRun';
+    var durationMin = 15;
+    var travelKm = 0.0;
+    var clientBoost = 0;
+    Map<String, dynamic>? quote;
+    var quoting = false;
+    String? descError;
+    Timer? debounce;
+
+    final presets = <Map<String, String>>[
+      {
+        'cat': 'errandRun',
+        'label': 'Errand',
+        'title': 'Quick help nearby',
+        'desc':
+            'Need someone for about 15 minutes at my place for a simple neighborhood errand.',
+      },
+      {
+        'cat': 'queueStanding',
+        'label': 'Queue',
+        'title': 'Hold bakery queue',
+        'desc':
+            'Stand in the morning bakery queue for me — expect 20–30 minutes wait in the rush.',
+      },
+      {
+        'cat': 'movingHelp',
+        'label': 'Heavy',
+        'title': 'Carry couch up stairs',
+        'desc':
+            'Help carry a heavy sofa up two flights of stairs at my apartment right now.',
+      },
+      {
+        'cat': 'gardening',
+        'label': 'Plants',
+        'title': 'Water my plants',
+        'desc':
+            'Quick porch plant watering for about five minutes while I am away from home.',
+      },
+    ];
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            Future<void> refreshQuote() async {
+              final desc = descCtrl.text.trim();
+              if (desc.length < 20) {
+                setLocal(() {
+                  descError = 'Description required (min 20 characters)';
+                  quote = null;
+                  quoting = false;
+                });
+                return;
+              }
+              setLocal(() {
+                descError = null;
+                quoting = true;
+              });
+              try {
+                final q = await context.read<TaskRepository>().priceQuote(
+                      title: titleCtrl.text.trim(),
+                      description: desc,
+                      category: category,
+                      lat: 6.9271,
+                      lon: 79.8612,
+                      durationMinutes: durationMin,
+                      urgency: urgency,
+                      travelKm: travelKm > 0 ? travelKm : null,
+                      destLat: travelKm > 0 ? 6.91 : null,
+                      destLon: travelKm > 0 ? 79.87 : null,
+                      clientBoostLkr: clientBoost,
+                    );
+                if (!ctx.mounted) return;
+                setLocal(() {
+                  quote = q;
+                  quoting = false;
+                });
+              } catch (e) {
+                if (ctx.mounted) {
+                  setLocal(() {
+                    quoting = false;
+                    descError = '$e';
+                  });
+                }
+              }
+            }
+
+            void scheduleQuote() {
+              debounce?.cancel();
+              debounce = Timer(const Duration(milliseconds: 550), refreshQuote);
+            }
+
+            final fairFloor = quote?['gemini_labor_lkr'] ?? quote?['labor_lkr'];
+            final total = quote?['labor_lkr'];
+            final boost = quote?['client_boost_lkr'] ?? 0;
+            final priceNote = quote?['explanation']?.toString();
+            final policy = quote?['policy']?.toString();
+
+            if (quote == null && !quoting && descError == null) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (ctx.mounted) refreshQuote();
+              });
+            }
+
+            return AlertDialog(
+              title: const Text('Instant Dispatch'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Task type', style: AppTextStyles.bodySmall),
+                    const Gap(6),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final p in presets)
+                          ChoiceChip(
+                            label: Text(p['label']!),
+                            selected: category == p['cat'],
+                            onSelected: (_) {
+                              setLocal(() {
+                                category = p['cat']!;
+                                titleCtrl.text = p['title']!;
+                                descCtrl.text = p['desc']!;
+                              });
+                              refreshQuote();
+                            },
+                          ),
+                      ],
+                    ),
+                    const Gap(8),
+                    TextField(
+                      controller: titleCtrl,
+                      decoration:
+                          const InputDecoration(labelText: 'What do you need?'),
+                      onChanged: (_) => scheduleQuote(),
+                    ),
+                    TextField(
+                      controller: descCtrl,
+                      maxLines: 3,
+                      decoration: InputDecoration(
+                        labelText: 'Full situation (required)',
+                        errorText: descError,
+                        helperText:
+                            'Describe the full situation — we set a fair helper-safe price',
+                      ),
+                      onChanged: (_) => scheduleQuote(),
+                    ),
+                    const Gap(10),
+                    Text('Duration', style: AppTextStyles.bodySmall),
+                    const Gap(6),
+                    Wrap(
+                      spacing: 6,
+                      children: [
+                        for (final m in [10, 15, 30, 60])
+                          ChoiceChip(
+                            label: Text(m < 60 ? '${m}m' : '1h'),
+                            selected: durationMin == m,
+                            onSelected: (_) {
+                              setLocal(() => durationMin = m);
+                              refreshQuote();
+                            },
+                          ),
+                      ],
+                    ),
+                    const Gap(10),
+                    Text('Travel to destination', style: AppTextStyles.bodySmall),
+                    const Gap(6),
+                    Wrap(
+                      spacing: 6,
+                      children: [
+                        for (final km in [0.0, 0.5, 1.5, 3.0])
+                          ChoiceChip(
+                            label: Text(km == 0 ? 'On-site' : '${km} km'),
+                            selected: travelKm == km,
+                            onSelected: (_) {
+                              setLocal(() => travelKm = km);
+                              refreshQuote();
+                            },
+                          ),
+                      ],
+                    ),
+                    const Gap(10),
+                    Text('Urgency', style: AppTextStyles.bodySmall),
+                    const Gap(6),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        for (final u in ['normal', 'soon', 'urgent'])
+                          ChoiceChip(
+                            label: Text(u),
+                            selected: urgency == u,
+                            onSelected: (_) {
+                              setLocal(() => urgency = u);
+                              refreshQuote();
+                            },
+                          ),
+                      ],
+                    ),
+                    const Gap(12),
+                    Text(
+                      'Optional tip (cannot go below fair price)',
+                      style: AppTextStyles.bodySmall,
+                    ),
+                    const Gap(6),
+                    TextField(
+                      controller: boostCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Tip LKR (0 = accept fair price)',
+                        hintText: 'e.g. 100',
+                      ),
+                      onChanged: (v) {
+                        clientBoost = int.tryParse(v.trim()) ?? 0;
+                        if (clientBoost < 0) clientBoost = 0;
+                        scheduleQuote();
+                      },
+                    ),
+                    const Gap(14),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.accent.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: AppColors.accent.withValues(alpha: 0.25),
+                        ),
+                      ),
+                      child: quoting
+                          ? const Center(
+                              child: SizedBox(
+                                width: 20,
+                                height: 20,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            )
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  total == null
+                                      ? (descError ?? 'Add a full description')
+                                      : 'Pay LKR $total',
+                                  style: AppTextStyles.headingSmall
+                                      .copyWith(fontSize: 15),
+                                ),
+                                if (fairFloor != null) ...[
+                                  const Gap(4),
+                                  Text(
+                                    'Fair floor LKR $fairFloor'
+                                    '${boost != null && boost != 0 ? ' + your tip LKR $boost' : ''}'
+                                    ' · you cannot undercut',
+                                    style: AppTextStyles.bodySmall.copyWith(
+                                      fontSize: 11,
+                                      color: AppColors.textMuted,
+                                    ),
+                                  ),
+                                ],
+                                if (priceNote != null) ...[
+                                  const Gap(4),
+                                  Text(
+                                    priceNote,
+                                    style: AppTextStyles.bodySmall.copyWith(
+                                      fontSize: 11,
+                                      color: AppColors.textMuted,
+                                    ),
+                                  ),
+                                ],
+                                if (policy != null) ...[
+                                  const Gap(4),
+                                  Text(
+                                    policy,
+                                    style: AppTextStyles.bodySmall.copyWith(
+                                      fontSize: 10,
+                                      color: AppColors.textMuted,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('Cancel')),
+                TextButton(
+                  onPressed: quoting || total == null
+                      ? null
+                      : () => Navigator.pop(ctx, true),
+                  child: const Text('Accept price & dispatch'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    debounce?.cancel();
+    if (ok != true || !mounted) {
+      titleCtrl.dispose();
+      descCtrl.dispose();
+      boostCtrl.dispose();
+      return;
+    }
+
+    try {
+      final desc = descCtrl.text.trim();
+      if (desc.length < 20) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Description is mandatory (min 20 characters)'),
+            backgroundColor: AppColors.errorColor,
+          ),
+        );
+        return;
+      }
+
+      final live = await context.read<TaskRepository>().listLiveHelpers(
+            lat: 6.9271,
+            lon: 79.8612,
+          );
+      final helpers = live['helpers'] as List? ?? [];
+      if (helpers.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No porch lights ON nearby — ask a helper to turn Available',
+            ),
+          ),
+        );
+        return;
+      }
+
+      final result = await context.read<TaskRepository>().instantDispatch(
+            title: titleCtrl.text.trim().isEmpty
+                ? 'Quick help nearby'
+                : titleCtrl.text.trim(),
+            description: desc,
+            category: category,
+            lat: 6.9271,
+            lon: 79.8612,
+            durationMinutes: durationMin,
+            urgency: urgency,
+            travelKm: travelKm > 0 ? travelKm : null,
+            destLat: travelKm > 0 ? 6.91 : null,
+            destLon: travelKm > 0 ? 79.87 : null,
+            clientBoostLkr: clientBoost,
+          );
+      if (!mounted) return;
+      final name = result['selected_helper_name']?.toString() ?? 'Helper';
+      final pricing = result['pricing'] as Map?;
+      final labor = pricing?['labor_lkr'];
+      final batch = result['batch'] as Map?;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Matched $name · LKR ${labor ?? '—'} locked. '
+            '${batch != null ? 'Street batch open for neighbors. ' : ''}'
+            '${result['explanation'] ?? ''}',
+          ),
+          backgroundColor: AppColors.successColor,
+        ),
+      );
+      final auth = context.read<AuthBloc>().state;
+      if (auth is AuthAuthenticated) {
+        context.read<TaskBloc>().add(TaskFetchClientTasks(auth.profile.id));
+      }
+      _refreshStreetBatches();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$e'),
+          backgroundColor: AppColors.errorColor,
+        ),
+      );
+    } finally {
+      titleCtrl.dispose();
+      descCtrl.dispose();
+      boostCtrl.dispose();
+    }
+  }
+
+  Widget _buildNeighborVouchCard() {
+    final needsVouch = _liveHelpers
+        .where((h) => h['neighbor_vouched'] != true)
+        .toList();
+    if (needsVouch.isEmpty && _liveHelpers.isEmpty) {
+      return const SliverToBoxAdapter(child: SizedBox.shrink());
+    }
+    final target = needsVouch.isNotEmpty
+        ? needsVouch.first
+        : _liveHelpers.first;
+    final name = target['full_name']?.toString() ?? 'Helper';
+    final count = target['vouch_count'] ?? 0;
+    final threshold = target['vouch_threshold'] ?? 3;
+    final badged = target['neighbor_vouched'] == true;
+
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+        child: Material(
+          color: AppColors.cardDark,
+          borderRadius: BorderRadius.circular(16),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: badged ? null : () => _vouchHelper(target),
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: AppColors.accent.withValues(alpha: 0.3),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: AppColors.accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      badged
+                          ? Icons.verified_user_rounded
+                          : Icons.handshake_rounded,
+                      color: AppColors.accent,
+                    ),
+                  ),
+                  const Gap(12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          badged
+                              ? 'Neighbor-Vouched · $name'
+                              : 'Vouch $name ($count/$threshold)',
+                          style:
+                              AppTextStyles.headingSmall.copyWith(fontSize: 14),
+                        ),
+                        Text(
+                          badged
+                              ? 'Unlocked for inside-home micro-tasks'
+                              : 'Stake LKR 200 · 3 local vouches unlock home entry',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textMuted,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (!badged)
+                    Text(
+                      'Vouch',
+                      style: AppTextStyles.capsLabel
+                          .copyWith(color: AppColors.accent),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _vouchHelper(Map<String, dynamic> helper) async {
+    if (!await requireAuth(context, returnTo: AppRoutes.shell)) return;
+    if (!mounted) return;
+    if (!await requireVerified(context, returnTo: AppRoutes.shell)) return;
+    if (!mounted) return;
+
+    final helperId = helper['id']?.toString();
+    if (helperId == null) return;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Neighbor vouch'),
+        content: Text(
+          'Stake LKR 200 from your wallet to vouch '
+          '${helper['full_name'] ?? 'this helper'}. '
+          'Three local vouches unlock inside-home tasks for them.',
+          style: AppTextStyles.bodySmall,
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Stake & vouch')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    try {
+      final result = await context.read<TaskRepository>().vouchNeighbor(
+            helperId: helperId,
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${result['explanation'] ?? 'Vouch recorded'}',
+          ),
+          backgroundColor: AppColors.successColor,
+        ),
+      );
+      _refreshLiveHelpers();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$e'),
+          backgroundColor: AppColors.errorColor,
+        ),
+      );
+    }
+  }
+
+  Widget _buildStreetBatchCard() {
+    if (_streetBatches.isEmpty) {
+      return const SliverToBoxAdapter(child: SizedBox.shrink());
+    }
+    final offer = _streetBatches.first;
+    final helper = offer['helper_name']?.toString() ?? 'Helper';
+    final secs = offer['seconds_left'] ?? 0;
+    final price = offer['sample_labor_lkr'];
+    final discount = offer['discount_pct'] ?? 30;
+
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+        child: Material(
+          color: AppColors.cardDark,
+          borderRadius: BorderRadius.circular(16),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () => _joinStreetBatch(offer),
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: AppColors.successColor.withValues(alpha: 0.4),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: AppColors.successColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.route_rounded,
+                        color: AppColors.successColor),
+                  ),
+                  const Gap(12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Street Batch open',
+                          style: AppTextStyles.headingSmall.copyWith(fontSize: 14),
+                        ),
+                        Text(
+                          '$helper on your block · ~$discount% off'
+                          '${price != null ? ' · from LKR $price' : ''} · ${secs}s left',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textMuted,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    'Join',
+                    style: AppTextStyles.capsLabel.copyWith(
+                      color: AppColors.successColor,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _joinStreetBatch(Map<String, dynamic> offer) async {
+    if (!await requireAuth(context, returnTo: AppRoutes.shell)) return;
+    if (!mounted) return;
+    if (!await requireVerified(context, returnTo: AppRoutes.shell)) return;
+    if (!mounted) return;
+
+    final batchId = offer['id']?.toString();
+    if (batchId == null) return;
+
+    final titleCtrl = TextEditingController(text: 'Quick piggyback favor');
+    final descCtrl = TextEditingController(
+      text:
+          'Same-street piggyback while the helper is already on my block — quick doorstep favor.',
+    );
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Join Street Batch'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${offer['helper_name'] ?? 'Helper'} is on '
+              '${offer['street_label'] ?? 'your street'}. '
+              'Piggyback at ~${offer['discount_pct'] ?? 30}% off.',
+              style: AppTextStyles.bodySmall,
+            ),
+            const Gap(12),
+            TextField(
+              controller: titleCtrl,
+              decoration: const InputDecoration(labelText: 'What do you need?'),
+            ),
+            TextField(
+              controller: descCtrl,
+              maxLines: 2,
+              decoration: const InputDecoration(labelText: 'Details'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Join at batch price')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) {
+      titleCtrl.dispose();
+      descCtrl.dispose();
+      return;
+    }
+
+    try {
+      final result = await context.read<TaskRepository>().joinStreetBatch(
+            batchId: batchId,
+            title: titleCtrl.text.trim().isEmpty
+                ? 'Quick piggyback favor'
+                : titleCtrl.text.trim(),
+            description: descCtrl.text.trim(),
+            lat: 6.9271,
+            lon: 79.8612,
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Joined batch · LKR ${result['labor_lkr']} '
+            '(${result['discount_pct']}% off). ${result['explanation'] ?? ''}',
+          ),
+          backgroundColor: AppColors.successColor,
+        ),
+      );
+      final auth = context.read<AuthBloc>().state;
+      if (auth is AuthAuthenticated) {
+        context.read<TaskBloc>().add(TaskFetchClientTasks(auth.profile.id));
+      }
+      _refreshStreetBatches();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$e'),
+          backgroundColor: AppColors.errorColor,
+        ),
+      );
+    } finally {
+      titleCtrl.dispose();
+      descCtrl.dispose();
+    }
   }
 
   Widget _buildSectionTitle(String title) {

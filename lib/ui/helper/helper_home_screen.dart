@@ -9,6 +9,7 @@ import 'package:hyperlocal/core/constants/app_colors.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/router/app_router.dart';
 import 'package:hyperlocal/data/models/task.dart';
+import 'package:hyperlocal/data/repositories/task_repository.dart';
 import 'package:hyperlocal/ui/_shared/task_status_badge.dart';
 import 'package:hyperlocal/ui/_shared/task_photo_gallery.dart';
 import 'package:hyperlocal/blocs/mode/mode_cubit.dart';
@@ -23,6 +24,12 @@ class HelperHomeScreen extends StatefulWidget {
 
 class _HelperHomeScreenState extends State<HelperHomeScreen> {
   String _selectedFilter = 'All';
+  bool _presenceOn = false;
+  bool _presenceBusy = false;
+  List<Map<String, dynamic>> _batchStops = const [];
+  int _vouchCount = 0;
+  int _vouchThreshold = 3;
+  bool _neighborVouched = false;
 
   final _filters = [
     'All', '🚶 Queue', '🛒 Grocery', '🧹 Cleaning',
@@ -35,6 +42,81 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
     context.read<TaskBloc>()
       ..add(TaskFetchNearbyTasks())
       ..add(TaskSubscribeToFeed());
+    _refreshBatchRoute();
+    _refreshTrust();
+  }
+
+  Future<void> _refreshTrust() async {
+    final auth = context.read<AuthBloc>().state;
+    if (auth is! AuthAuthenticated) return;
+    try {
+      final card =
+          await context.read<TaskRepository>().helperTrust(auth.profile.id);
+      if (!mounted) return;
+      setState(() {
+        _vouchCount = (card['vouch_count'] as num?)?.toInt() ?? 0;
+        _vouchThreshold = (card['vouch_threshold'] as num?)?.toInt() ?? 3;
+        _neighborVouched = card['neighbor_vouched'] == true;
+      });
+    } catch (_) {
+      /* demo helpers use seeded badge via live list */
+    }
+  }
+
+  Future<void> _refreshBatchRoute() async {
+    try {
+      final res = await context.read<TaskRepository>().helperBatchRoute();
+      if (!mounted) return;
+      final tasks = (res['active_tasks'] as List?) ?? const [];
+      setState(() {
+        _batchStops = tasks
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      });
+    } catch (_) {
+      /* optional */
+    }
+  }
+
+  Future<void> _togglePresence(bool on) async {
+    final auth = context.read<AuthBloc>().state;
+    if (auth is! AuthAuthenticated) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sign in to go Available')),
+      );
+      return;
+    }
+    setState(() => _presenceBusy = true);
+    try {
+      await context.read<TaskRepository>().setHelperPresence(
+            available: on,
+            lat: on ? 6.9271 : null,
+            lon: on ? 79.8612 : null,
+          );
+      if (!mounted) return;
+      setState(() => _presenceOn = on);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            on
+                ? 'Porch light ON — clients can Instant Dispatch you within ~500 m'
+                : 'Porch light OFF',
+          ),
+          backgroundColor: AppColors.helperAccent,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$e'),
+          backgroundColor: AppColors.errorColor,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _presenceBusy = false);
+    }
   }
 
   Color _catColor(TaskCategory cat) {
@@ -100,12 +182,130 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
         body: CustomScrollView(
           slivers: [
             _buildHeader(),
+            _buildPresenceCard(),
+            _buildStreetRouteCard(),
             _buildEarningsBar(),
             _buildFilterRow(),
             _buildFeedTitle(),
             _buildFeed(),
             const SliverToBoxAdapter(child: Gap(100)),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPresenceCard() {
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: AppColors.cardDark,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: (_presenceOn ? AppColors.helperAccent : AppColors.borderColor)
+                  .withValues(alpha: 0.5),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                _presenceOn
+                    ? Icons.sensors_rounded
+                    : Icons.sensors_off_rounded,
+                color: _presenceOn
+                    ? AppColors.helperAccent
+                    : AppColors.textMuted,
+              ),
+              const Gap(10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Porch light · Instant Dispatch',
+                      style: AppTextStyles.headingSmall.copyWith(fontSize: 13),
+                    ),
+                    Text(
+                      _presenceOn
+                          ? 'Available within ~500 m — no browse, clients ping you'
+                          : 'Turn ON so nearby micro-tasks can auto-match you',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: AppColors.textMuted,
+                        fontSize: 11,
+                      ),
+                    ),
+                    const Gap(4),
+                    Text(
+                      _neighborVouched
+                          ? 'Neighbor-Vouched · inside-home unlocked'
+                          : 'Vouches $_vouchCount/$_vouchThreshold · inside-home locked',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: _neighborVouched
+                            ? AppColors.helperAccent
+                            : AppColors.textMuted,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Switch.adaptive(
+                value: _presenceOn,
+                onChanged: _presenceBusy ? null : _togglePresence,
+                activeColor: AppColors.helperAccent,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStreetRouteCard() {
+    if (_batchStops.isEmpty) {
+      return const SliverToBoxAdapter(child: SizedBox.shrink());
+    }
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.cardDark,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: AppColors.helperAccent.withValues(alpha: 0.45),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Street route · ${_batchStops.length} stop${_batchStops.length == 1 ? '' : 's'}',
+                style: AppTextStyles.headingSmall.copyWith(fontSize: 13),
+              ),
+              const Gap(4),
+              Text(
+                'Stay on one block — stack micro-tasks without travel',
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: AppColors.textMuted,
+                  fontSize: 11,
+                ),
+              ),
+              const Gap(8),
+              for (var i = 0; i < _batchStops.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '${i + 1}. ${_batchStops[i]['title'] ?? 'Stop'}',
+                    style: AppTextStyles.bodySmall.copyWith(fontSize: 12),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );

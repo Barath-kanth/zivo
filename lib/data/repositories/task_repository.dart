@@ -23,6 +23,172 @@ class TaskRepository {
     );
   }
 
+  /// Fair floor quote (boost only; never undercut helper).
+  Future<Map<String, dynamic>> priceQuote({
+    required String title,
+    required String description,
+    required double lat,
+    required double lon,
+    String category = 'errandRun',
+    int? durationMinutes,
+    String urgency = 'urgent',
+    double? destLat,
+    double? destLon,
+    double? travelKm,
+    int clientBoostLkr = 0,
+    String? deadlineAt,
+    Map<String, dynamic>? contextFields,
+  }) {
+    return _api.postJson(
+      '/tasks/price-quote',
+      {
+        'title': title,
+        'description': description,
+        'category': category,
+        'lat': lat,
+        'lon': lon,
+        if (durationMinutes != null) 'duration_minutes': durationMinutes,
+        'urgency': urgency,
+        if (destLat != null) 'dest_lat': destLat,
+        if (destLon != null) 'dest_lon': destLon,
+        if (travelKm != null) 'travel_km': travelKm,
+        if (clientBoostLkr > 0) 'client_boost_lkr': clientBoostLkr,
+        if (deadlineAt != null) 'deadline_at': deadlineAt,
+        if (contextFields != null && contextFields.isNotEmpty)
+          'context_fields': contextFields,
+      },
+      auth: false,
+    );
+  }
+
+  /// Context-specific pricing questions for this task.
+  Future<Map<String, dynamic>> pricingFields({
+    required String title,
+    required String description,
+    required String category,
+  }) {
+    return _api.postJson(
+      '/tasks/pricing-fields',
+      {
+        'title': title,
+        'description': description,
+        'category': category,
+      },
+      auth: false,
+    );
+  }
+
+  /// Pillar 1 — Instant Dispatch (Available helpers within walk radius).
+  Future<Map<String, dynamic>> instantDispatch({
+    required String title,
+    required String description,
+    required double lat,
+    required double lon,
+    String category = 'errandRun',
+    int durationMinutes = 15,
+    String urgency = 'urgent',
+    double? destLat,
+    double? destLon,
+    double? travelKm,
+    int clientBoostLkr = 0,
+  }) {
+    return _api.postJson('/tasks/dispatch', {
+      'title': title,
+      'description': description,
+      'category': category,
+      'lat': lat,
+      'lon': lon,
+      'duration_minutes': durationMinutes,
+      'urgency': urgency,
+      if (destLat != null) 'dest_lat': destLat,
+      if (destLon != null) 'dest_lon': destLon,
+      if (travelKm != null) 'travel_km': travelKm,
+      if (clientBoostLkr > 0) 'client_boost_lkr': clientBoostLkr,
+    });
+  }
+
+  /// Pillar 3 — Open street batches neighbors can piggyback onto.
+  Future<Map<String, dynamic>> listStreetBatches({
+    required double lat,
+    required double lon,
+  }) {
+    return _api.getJson('/batches/nearby', query: {
+      'lat': '$lat',
+      'lon': '$lon',
+    });
+  }
+
+  /// Pillar 3 — Join an open street batch at a discounted micro-price.
+  Future<Map<String, dynamic>> joinStreetBatch({
+    required String batchId,
+    required String title,
+    required String description,
+    required double lat,
+    required double lon,
+    int durationMinutes = 10,
+    String urgency = 'soon',
+  }) {
+    return _api.postJson('/batches/join', {
+      'batch_id': batchId,
+      'title': title,
+      'description': description,
+      'lat': lat,
+      'lon': lon,
+      'duration_minutes': durationMinutes,
+      'urgency': urgency,
+    });
+  }
+
+  /// Pillar 3 — Helper stacked stops on one street.
+  Future<Map<String, dynamic>> helperBatchRoute() {
+    return _api.getJson('/me/batch-route');
+  }
+
+  /// Pillar 4 — Stake LKR to vouch a neighbor helper.
+  Future<Map<String, dynamic>> vouchNeighbor({
+    required String helperId,
+    String? note,
+    double lat = 6.9271,
+    double lon = 79.8612,
+  }) {
+    return _api.postJson('/vouch', {
+      'helper_id': helperId,
+      if (note != null) 'note': note,
+      'lat': lat,
+      'lon': lon,
+    });
+  }
+
+  Future<Map<String, dynamic>> helperTrust(String helperId) {
+    return _api.getJson('/helpers/$helperId/trust');
+  }
+
+  Future<Map<String, dynamic>> vouchMeta() {
+    return _api.getJson('/vouch/meta');
+  }
+
+  Future<Map<String, dynamic>> listLiveHelpers({
+    required double lat,
+    required double lon,
+  }) {
+    return _api.getJson('/helpers/live', query: {
+      'lat': '$lat',
+      'lon': '$lon',
+    });
+  }
+
+  Future<Map<String, dynamic>> setHelperPresence({
+    required bool available,
+    double? lat,
+    double? lon,
+  }) {
+    return _api.postJson('/me/presence', {
+      'available': available,
+      if (lat != null) 'lat': lat,
+      if (lon != null) 'lon': lon,
+    });
+  }
+
   Future<Map<String, dynamic>> matchHelpers(String taskId) {
     return _api.postJson('/tasks/$taskId/match', {});
   }
@@ -43,7 +209,14 @@ class TaskRepository {
     );
   }
 
-  Future<Task> createTask(Task task) async {
+  Future<Task> createTask(
+    Task task, {
+    String? deadlineAt,
+    int clientBoostLkr = 0,
+    double? travelKm,
+    String urgency = 'normal',
+    Map<String, dynamic>? contextFields,
+  }) async {
     if (task.clientId.startsWith('demo-')) {
       return task.copyWith(
         goodsBudget: task.goodsBudget,
@@ -57,10 +230,16 @@ class TaskRepository {
       'description': task.description,
       'category': task.category.name,
       'estimated_hours': task.estimatedHours,
-      'hourly_rate': task.hourlyRate,
       'goods_budget': task.goodsBudget,
       'lat': loc.latitude,
       'lon': loc.longitude,
+      'deadline_at': deadlineAt ??
+          DateTime.now().add(const Duration(hours: 24)).toUtc().toIso8601String(),
+      'urgency': urgency,
+      if (clientBoostLkr > 0) 'client_boost_lkr': clientBoostLkr,
+      if (travelKm != null) 'travel_km': travelKm,
+      if (contextFields != null && contextFields.isNotEmpty)
+        'context_fields': contextFields,
     };
     final address = task.locationAddress ?? task.locationLabel;
     if (address != null && address.trim().isNotEmpty) {
@@ -236,6 +415,43 @@ class TaskRepository {
       } catch (_) {}
     });
     return SubscriptionHandle(timer.cancel);
+  }
+
+  /// In-app task chat (client ↔ assigned helper). Persisted on the server.
+  Future<Map<String, dynamic>> getTaskChat(
+    String taskId, {
+    String? afterIso,
+  }) {
+    return _api.getJson(
+      '/tasks/$taskId/chat',
+      query: {
+        if (afterIso != null && afterIso.isNotEmpty) 'after': afterIso,
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> sendTaskChatMessage({
+    required String taskId,
+    required String body,
+  }) {
+    return _api.postJson('/tasks/$taskId/chat', {'body': body});
+  }
+
+  /// Gemini Trust Arbitrator — verdict from chat + timeline + vouch (+ receipt).
+  Future<Map<String, dynamic>> runTrustReview({
+    required String taskId,
+    String? reason,
+    String? receiptNote,
+  }) {
+    return _api.postJson('/tasks/$taskId/trust-review', {
+      if (reason != null && reason.isNotEmpty) 'reason': reason,
+      if (receiptNote != null && receiptNote.isNotEmpty)
+        'receipt_note': receiptNote,
+    });
+  }
+
+  Future<Map<String, dynamic>> listTrustReviews(String taskId) {
+    return _api.getJson('/tasks/$taskId/trust-reviews');
   }
 
   SubscriptionHandle subscribeToTask({

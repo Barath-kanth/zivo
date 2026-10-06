@@ -3,6 +3,9 @@ import { Firestore, FieldValue } from '@google-cloud/firestore';
 import {
   DISPATCH_RADIUS_KM,
   PLATFORM_FEE_PERCENT,
+  VOUCH_STAKE_LKR,
+  VOUCH_THRESHOLD,
+  WALK_RADIUS_KM,
   gcpProjectId,
 } from './config.js';
 import { refreshPhotoUrls } from './uploads.js';
@@ -18,6 +21,11 @@ export type UserProfile = {
   email?: string;
   email_verified_at?: string;
   is_helper_active: boolean;
+  /** Porch-light presence for instant walkable dispatch. */
+  presence_available?: boolean;
+  presence_lat?: number;
+  presence_lon?: number;
+  presence_at?: string;
   helper_bio?: string;
   helper_skills: string[];
   rating_as_client: number;
@@ -31,9 +39,27 @@ export type UserProfile = {
   kyc_rejection_reason?: string;
   nic_number?: string;
   home_address?: string;
+  /** Home pin for neighbor-vouch locality checks. */
+  home_lat?: number;
+  home_lon?: number;
+  /** Count of active neighbor vouches received (Pillar 4). */
+  vouch_count?: number;
+  /** True when vouch_count ≥ VOUCH_THRESHOLD — unlocks inside-home work. */
+  neighbor_vouched?: boolean;
   role_intent: string;
   guidelines_accepted_at?: string;
   password_hash?: string;
+};
+
+export type VouchRow = {
+  id: string;
+  helper_id: string;
+  voucher_id: string;
+  voucher_name: string;
+  stake_lkr: number;
+  note?: string;
+  created_at: string;
+  status: 'active' | 'revoked';
 };
 
 export type TaskRow = {
@@ -60,6 +86,48 @@ export type TaskRow = {
   photo_urls?: string[];
   photo_paths?: string[];
   helper?: { full_name: string; avatar_url?: string; rating_as_helper: number };
+  /** Street-batch linkage (Pillar 3). */
+  batch_id?: string;
+  batch_anchor?: boolean;
+  batch_discount_pct?: number;
+  /** Complete-before deadline (ISO). */
+  deadline_at?: string;
+  difficulty?: string;
+  physical_effort?: string;
+  /** Set by Trust Arbitrator — blocks escrow release until cleared. */
+  trust_hold?: boolean;
+  trust_hold_reason?: string;
+  last_trust_review_id?: string;
+};
+
+/** Persisted Gemini trust verdict over job evidence (Cup differentiator). */
+export type TrustReview = {
+  id: string;
+  task_id: string;
+  requester_id: string;
+  verdict: 'continue' | 'hold_escrow' | 'escalate';
+  confidence: number;
+  summary: string;
+  concerns: string[];
+  recommended_actions: string[];
+  evidence_used: string[];
+  created_at: string;
+  mode: 'mock' | 'gemini';
+};
+
+export type BatchWindow = {
+  id: string;
+  anchor_task_id: string;
+  helper_id: string;
+  helper_name: string;
+  lat: number;
+  lon: number;
+  street_label: string;
+  opened_at: string;
+  expires_at: string;
+  status: 'open' | 'closed';
+  member_task_ids: string[];
+  max_members: number;
 };
 
 export type LedgerEntry = {
@@ -71,6 +139,26 @@ export type LedgerEntry = {
   balance_after: number;
   description: string;
   created_at: string;
+};
+
+/** In-app task chat — client ↔ helper only; persisted for dispute/audit. */
+export type ChatMessage = {
+  id: string;
+  task_id: string;
+  sender_id: string;
+  sender_role: 'client' | 'helper' | 'system';
+  body: string;
+  created_at: string;
+};
+
+export type ChatThread = {
+  task_id: string;
+  client_id: string;
+  helper_id: string;
+  created_at: string;
+  last_message_at?: string;
+  last_preview?: string;
+  message_count: number;
 };
 
 type Session = { token: string; userId: string; expiresAt: number };
@@ -96,9 +184,14 @@ function firestore(): Firestore {
 // In-memory fallback for local-only runs without GCP credentials.
 const memUsers = new Map<string, UserProfile>();
 const memTasks = new Map<string, TaskRow>();
+const memBatches = new Map<string, BatchWindow>();
+const memVouches = new Map<string, VouchRow>();
 const memLedger: LedgerEntry[] = [];
 const memSessions = new Map<string, Session>();
 const memOtps = new Map<string, OtpRecord>();
+const memChatThreads = new Map<string, ChatThread>();
+const memChatMessages = new Map<string, ChatMessage[]>();
+const memTrustReviews = new Map<string, TrustReview[]>();
 
 export function dbMode(): 'firestore' | 'memory' {
   return useMemory ? 'memory' : 'firestore';
@@ -185,12 +278,46 @@ async function allTasks(): Promise<TaskRow[]> {
   );
 }
 
+async function ensureDemoHelperPresence() {
+  for (const [id, dLat, dLon] of [
+    ['h1', 0.001, 0.0005],
+    ['h3', 0.003, -0.001],
+  ] as const) {
+    const u = await loadUser(id);
+    if (!u || u.kyc_status !== 'verified') continue;
+    if (!(u.presence_available && u.presence_lat != null)) {
+      u.is_helper_active = true;
+      u.presence_available = true;
+      u.presence_lat = 6.9271 + dLat;
+      u.presence_lon = 79.8612 + dLon;
+      u.presence_at = new Date().toISOString();
+    }
+    // Demo: Fathima is Neighbor-Vouched (inside-home unlocked); Nimal is not.
+    if (id === 'h3') {
+      u.vouch_count = Math.max(u.vouch_count ?? 0, VOUCH_THRESHOLD);
+      u.neighbor_vouched = true;
+      u.home_lat = u.presence_lat;
+      u.home_lon = u.presence_lon;
+    } else if (id === 'h1' && u.neighbor_vouched == null) {
+      u.vouch_count = u.vouch_count ?? 1;
+      u.neighbor_vouched = false;
+    }
+    await saveUser(u);
+  }
+}
+
 export async function seedDemo() {
   if (useMemory) {
-    if (memUsers.size) return;
+    if (memUsers.size) {
+      await ensureDemoHelperPresence();
+      return;
+    }
   } else {
     const meta = await firestore().collection('meta').doc('seed').get();
-    if (meta.exists) return;
+    if (meta.exists) {
+      await ensureDemoHelperPresence();
+      return;
+    }
   }
 
   const demoHelpers: Array<Partial<UserProfile> & { id: string; full_name: string }> = [
@@ -223,6 +350,8 @@ export async function seedDemo() {
   ];
 
   for (const h of demoHelpers) {
+    const live = h.is_helper_active === true;
+    const isH3 = h.id === 'h3';
     await saveUser({
       id: h.id,
       full_name: h.full_name,
@@ -240,6 +369,15 @@ export async function seedDemo() {
       guidelines_accepted_at: h.guidelines_accepted_at,
       phone: `+9477${h.id.replace(/\D/g, '').padEnd(7, '0').slice(0, 7)}`,
       phone_verified_at: new Date().toISOString(),
+      // Demo porch lights near Colombo Fort for Instant Dispatch demos.
+      presence_available: live,
+      presence_lat: live ? 6.9271 + (h.id === 'h1' ? 0.001 : 0.003) : undefined,
+      presence_lon: live ? 79.8612 + (h.id === 'h1' ? 0.0005 : -0.001) : undefined,
+      presence_at: live ? new Date().toISOString() : undefined,
+      home_lat: live ? 6.9271 + (h.id === 'h1' ? 0.001 : 0.003) : undefined,
+      home_lon: live ? 79.8612 + (h.id === 'h1' ? 0.0005 : -0.001) : undefined,
+      vouch_count: isH3 ? VOUCH_THRESHOLD : 1,
+      neighbor_vouched: isH3,
     });
   }
 
@@ -409,6 +547,9 @@ export async function createTask(input: {
   location_label?: string;
   photo_urls?: string[];
   photo_paths?: string[];
+  deadline_at?: string;
+  difficulty?: string;
+  physical_effort?: string;
 }): Promise<TaskRow> {
   const client = await loadUser(input.client_id);
   if (!client) throw new Error('Client not found');
@@ -451,6 +592,9 @@ export async function createTask(input: {
     created_at: new Date().toISOString(),
     photo_urls: input.photo_urls?.filter(Boolean).slice(0, 5) ?? [],
     photo_paths: input.photo_paths?.filter(Boolean).slice(0, 5) ?? [],
+    deadline_at: input.deadline_at,
+    difficulty: input.difficulty,
+    physical_effort: input.physical_effort,
   };
   await saveTask(row);
   await addLedger(client.id, id, 'escrow_hold', -hold, client.wallet_balance, 'Escrow hold');
@@ -512,6 +656,11 @@ export async function acceptTask(taskId: string, helperId: string) {
     rating_as_helper: helper.rating_as_helper,
   };
   await saveTask(task);
+  try {
+    await ensureTaskChat(task.id);
+  } catch {
+    /* chat is best-effort at match */
+  }
   return task;
 }
 
@@ -540,6 +689,11 @@ export async function completeTask(
 ) {
   const task = await loadTask(taskId);
   if (!task) throw new Error('Task not found');
+  if (task.trust_hold) {
+    throw new Error(
+      `Escrow held by Trust Arbitrator — ${task.trust_hold_reason ?? 'resolve the trust review first'}`,
+    );
+  }
   if (task.status !== 'in_progress' && task.status !== 'matched') {
     throw new Error(`Cannot complete from status ${task.status}`);
   }
@@ -609,8 +763,78 @@ export async function setHelperActive(userId: string, active: boolean) {
     u.guidelines_accepted_at = new Date().toISOString();
   }
   u.is_helper_active = active;
+  if (!active) {
+    u.presence_available = false;
+  }
   await saveUser(u);
   return u;
+}
+
+/** Helper toggles Available + shares live coords (≤500m dispatch). */
+export async function setHelperPresence(
+  userId: string,
+  input: { available: boolean; lat?: number; lon?: number },
+) {
+  const u = await loadUser(userId);
+  if (!u) throw new Error('User not found');
+  if (input.available) {
+    if (u.kyc_status !== 'verified') {
+      throw new Error('KYC verification required for presence');
+    }
+    if (!u.is_helper_active) {
+      u.is_helper_active = true;
+    }
+    if (input.lat == null || input.lon == null) {
+      throw new Error('lat/lon required when available=true');
+    }
+    u.presence_available = true;
+    u.presence_lat = input.lat;
+    u.presence_lon = input.lon;
+    u.presence_at = new Date().toISOString();
+  } else {
+    u.presence_available = false;
+    u.presence_at = new Date().toISOString();
+  }
+  await saveUser(u);
+  return u;
+}
+
+export type LiveHelper = {
+  id: string;
+  full_name: string;
+  distance_km: number;
+  rating_as_helper: number;
+  presence_at?: string;
+};
+
+/** Helpers with porch light ON inside walk radius. */
+export async function listLiveHelpersNearby(
+  lat: number,
+  lon: number,
+  radiusKm: number,
+): Promise<LiveHelper[]> {
+  const r = radiusKm > 0 ? radiusKm : WALK_RADIUS_KM;
+  return (await allUsers())
+    .filter(
+      (u) =>
+        u.is_helper_active &&
+        u.kyc_status === 'verified' &&
+        u.presence_available &&
+        u.presence_lat != null &&
+        u.presence_lon != null,
+    )
+    .map((u) => ({
+      id: u.id,
+      full_name: u.full_name,
+      distance_km: haversineKm(
+        { lat, lng: lon },
+        { lat: u.presence_lat!, lng: u.presence_lon! },
+      ),
+      rating_as_helper: u.rating_as_helper,
+      presence_at: u.presence_at,
+    }))
+    .filter((h) => h.distance_km <= r)
+    .sort((a, b) => a.distance_km - b.distance_km);
 }
 
 async function addLedger(
@@ -653,6 +877,293 @@ export async function listLedger(userId: string) {
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
+async function saveBatch(b: BatchWindow) {
+  if (useMemory) {
+    memBatches.set(b.id, b);
+    return;
+  }
+  await firestore().collection('batches').doc(b.id).set(b, { merge: true });
+}
+
+async function loadBatch(id: string): Promise<BatchWindow | undefined> {
+  if (useMemory) return memBatches.get(id);
+  const snap = await firestore().collection('batches').doc(id).get();
+  return snap.exists ? (snap.data() as BatchWindow) : undefined;
+}
+
+async function allBatches(): Promise<BatchWindow[]> {
+  if (useMemory) return [...memBatches.values()];
+  const snap = await firestore().collection('batches').get();
+  return snap.docs.map((d) => d.data() as BatchWindow);
+}
+
+export async function getBatch(id: string) {
+  return loadBatch(id);
+}
+
+/** Open a short same-street piggyback window after Instant Dispatch. */
+export async function openBatchWindow(input: {
+  anchor_task_id: string;
+  helper_id: string;
+  helper_name: string;
+  lat: number;
+  lon: number;
+  street_label?: string;
+  window_sec: number;
+  max_members?: number;
+}): Promise<BatchWindow> {
+  const now = Date.now();
+  const id = `batch_${now}`;
+  const win: BatchWindow = {
+    id,
+    anchor_task_id: input.anchor_task_id,
+    helper_id: input.helper_id,
+    helper_name: input.helper_name,
+    lat: input.lat,
+    lon: input.lon,
+    street_label: input.street_label ?? 'Your street',
+    opened_at: new Date(now).toISOString(),
+    expires_at: new Date(now + input.window_sec * 1000).toISOString(),
+    status: 'open',
+    member_task_ids: [input.anchor_task_id],
+    max_members: input.max_members ?? 4,
+  };
+  await saveBatch(win);
+
+  const anchor = await loadTask(input.anchor_task_id);
+  if (anchor) {
+    anchor.batch_id = id;
+    anchor.batch_anchor = true;
+    await saveTask(anchor);
+  }
+  return win;
+}
+
+async function expireStaleBatches(): Promise<void> {
+  const now = Date.now();
+  for (const b of await allBatches()) {
+    if (b.status !== 'open') continue;
+    if (new Date(b.expires_at).getTime() <= now) {
+      b.status = 'closed';
+      await saveBatch(b);
+    }
+  }
+}
+
+export async function listOpenBatchesNearby(
+  lat: number,
+  lon: number,
+  radiusKm: number,
+): Promise<Array<BatchWindow & { distance_km: number; seconds_left: number }>> {
+  await expireStaleBatches();
+  const now = Date.now();
+  return (await allBatches())
+    .filter((b) => b.status === 'open' && new Date(b.expires_at).getTime() > now)
+    .map((b) => ({
+      ...b,
+      distance_km: haversineKm({ lat, lng: lon }, { lat: b.lat, lng: b.lon }),
+      seconds_left: Math.max(
+        0,
+        Math.round((new Date(b.expires_at).getTime() - now) / 1000),
+      ),
+    }))
+    .filter((b) => b.distance_km <= radiusKm)
+    .sort((a, b) => a.distance_km - b.distance_km);
+}
+
+export async function appendBatchMember(
+  batchId: string,
+  taskId: string,
+): Promise<BatchWindow> {
+  const b = await loadBatch(batchId);
+  if (!b) throw new Error('Batch not found');
+  if (b.status !== 'open') throw new Error('Batch window closed');
+  if (new Date(b.expires_at).getTime() <= Date.now()) {
+    b.status = 'closed';
+    await saveBatch(b);
+    throw new Error('Batch window expired');
+  }
+  if (b.member_task_ids.length >= b.max_members) {
+    throw new Error('Street batch is full');
+  }
+  if (!b.member_task_ids.includes(taskId)) {
+    b.member_task_ids.push(taskId);
+  }
+  if (b.member_task_ids.length >= b.max_members) {
+    b.status = 'closed';
+  }
+  await saveBatch(b);
+  return b;
+}
+
+export async function patchTask(
+  taskId: string,
+  patch: Partial<TaskRow>,
+): Promise<TaskRow> {
+  const t = await loadTask(taskId);
+  if (!t) throw new Error('Task not found');
+  Object.assign(t, patch);
+  await saveTask(t);
+  return t;
+}
+
+export async function listHelperBatchRoute(helperId: string) {
+  await expireStaleBatches();
+  const tasks = await listHelperActiveTasks(helperId);
+  const batchIds = [
+    ...new Set(tasks.map((t) => t.batch_id).filter(Boolean) as string[]),
+  ];
+  const batches = (
+    await Promise.all(batchIds.map((id) => loadBatch(id)))
+  ).filter(Boolean) as BatchWindow[];
+  return {
+    active_tasks: tasks.filter((t) => t.batch_id),
+    batches,
+  };
+}
+
+async function saveVouch(v: VouchRow) {
+  if (useMemory) {
+    memVouches.set(v.id, v);
+    return;
+  }
+  await firestore().collection('vouches').doc(v.id).set(v, { merge: true });
+}
+
+async function allVouches(): Promise<VouchRow[]> {
+  if (useMemory) return [...memVouches.values()];
+  const snap = await firestore().collection('vouches').get();
+  return snap.docs.map((d) => d.data() as VouchRow);
+}
+
+export async function listVouchesForHelper(helperId: string) {
+  return (await allVouches())
+    .filter((v) => v.helper_id === helperId && v.status === 'active')
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
+async function refreshHelperVouchBadge(helperId: string) {
+  const helper = await loadUser(helperId);
+  if (!helper) return;
+  const count = (await listVouchesForHelper(helperId)).length;
+  helper.vouch_count = count;
+  helper.neighbor_vouched = count >= VOUCH_THRESHOLD;
+  await saveUser(helper);
+  return helper;
+}
+
+/** Neighbor stakes LKR to vouch a helper on their block. */
+export async function createNeighborVouch(input: {
+  voucherId: string;
+  helperId: string;
+  note?: string;
+  voucherLat?: number;
+  voucherLon?: number;
+}): Promise<{ vouch: VouchRow; helper: UserProfile }> {
+  if (input.voucherId === input.helperId) {
+    throw new Error('Cannot vouch for yourself');
+  }
+  const voucher = await loadUser(input.voucherId);
+  const helper = await loadUser(input.helperId);
+  if (!voucher || !helper) throw new Error('User not found');
+  if (voucher.kyc_status !== 'verified') {
+    throw new Error('Only verified neighbors can vouch');
+  }
+  if (!helper.is_helper_active || helper.kyc_status !== 'verified') {
+    throw new Error('Can only vouch verified active helpers');
+  }
+
+  const existing = (await listVouchesForHelper(input.helperId)).find(
+    (v) => v.voucher_id === input.voucherId,
+  );
+  if (existing) throw new Error('You already vouched for this helper');
+
+  const hLat = helper.presence_lat ?? helper.home_lat ?? 6.9271;
+  const hLon = helper.presence_lon ?? helper.home_lon ?? 79.8612;
+  const vLat = input.voucherLat ?? voucher.home_lat ?? voucher.presence_lat;
+  const vLon = input.voucherLon ?? voucher.home_lon ?? voucher.presence_lon;
+  if (vLat == null || vLon == null) {
+    throw new Error('Share your location to vouch a neighbor');
+  }
+  const dist = haversineKm(
+    { lat: vLat, lng: vLon },
+    { lat: hLat, lng: hLon },
+  );
+  if (dist > WALK_RADIUS_KM) {
+    throw new Error(
+      `Voucher must live/be within ${WALK_RADIUS_KM} km of the helper (same walk bubble)`,
+    );
+  }
+
+  const stake = VOUCH_STAKE_LKR;
+  if (voucher.wallet_balance < stake) {
+    throw new Error(`Need LKR ${stake} stake in wallet to vouch`);
+  }
+  voucher.wallet_balance -= stake;
+  voucher.escrow_balance += stake;
+  await saveUser(voucher);
+
+  const vouch: VouchRow = {
+    id: `vouch_${Date.now()}`,
+    helper_id: input.helperId,
+    voucher_id: input.voucherId,
+    voucher_name: voucher.full_name,
+    stake_lkr: stake,
+    note: input.note,
+    created_at: new Date().toISOString(),
+    status: 'active',
+  };
+  await saveVouch(vouch);
+  await addLedger(
+    voucher.id,
+    undefined,
+    'vouch_stake',
+    -stake,
+    voucher.wallet_balance,
+    `Neighbor vouch stake for ${helper.full_name}`,
+  );
+
+  const updated = (await refreshHelperVouchBadge(input.helperId))!;
+  return { vouch, helper: updated };
+}
+
+export async function getHelperTrustCard(helperId: string) {
+  const helper = await loadUser(helperId);
+  if (!helper) throw new Error('Helper not found');
+  const vouches = await listVouchesForHelper(helperId);
+  const count = Math.max(helper.vouch_count ?? 0, vouches.length);
+  const badged =
+    !!helper.neighbor_vouched || count >= VOUCH_THRESHOLD;
+  return {
+    helper_id: helperId,
+    full_name: helper.full_name,
+    vouch_count: count,
+    vouch_threshold: VOUCH_THRESHOLD,
+    neighbor_vouched: badged,
+    unlocks: 'inside_home',
+    vouches: vouches.map((v) => ({
+      id: v.id,
+      voucher_name: v.voucher_name,
+      stake_lkr: v.stake_lkr,
+      created_at: v.created_at,
+      note: v.note,
+    })),
+  };
+}
+
+/** Categories that require Neighbor-Vouched badge. */
+export const INSIDE_HOME_CATEGORIES = new Set([
+  'homeCleaning',
+  'homeCooking',
+  'babysitting',
+  'elderCare',
+  'laundry',
+]);
+
+export function requiresNeighborVouch(category?: string) {
+  return !!category && INSIDE_HOME_CATEGORIES.has(category);
+}
+
 /** Deterministic demo offsets so nearest ≠ best under dispute constraints. */
 const HELPER_GEO_OFFSET: Record<string, { dLat: number; dLng: number }> = {
   h1: { dLat: 0.0018, dLng: 0.0004 }, // ~0.2 km — nearest
@@ -671,6 +1182,265 @@ export async function helpersForMatch(task: TaskRow) {
       return { helper: u, distanceKm };
     })
     .filter((x) => x.distanceKm <= DISPATCH_RADIUS_KM);
+}
+
+function assertChatParticipant(task: TaskRow, userId: string): 'client' | 'helper' {
+  if (task.client_id === userId) return 'client';
+  if (task.helper_id === userId) return 'helper';
+  throw new Error('Only the client and assigned helper can use this chat');
+}
+
+/** Keep coordination on-platform — redact phone numbers / off-app contact. */
+function sanitizeChatBody(raw: string): string {
+  return raw
+    .trim()
+    .slice(0, 2000)
+    .replace(/\b(?:whatsapp|telegram|viber|imo|signal)\b/gi, '[use in-app chat]')
+    .replace(
+      /(?:\+?\d[\d\s\-().]{7,}\d)/g,
+      '[contact hidden — use in-app chat]',
+    );
+}
+
+async function saveChatThread(t: ChatThread) {
+  if (useMemory) {
+    memChatThreads.set(t.task_id, t);
+    return;
+  }
+  await firestore().collection('chats').doc(t.task_id).set(t, { merge: true });
+}
+
+async function loadChatThread(taskId: string): Promise<ChatThread | null> {
+  if (useMemory) return memChatThreads.get(taskId) ?? null;
+  const snap = await firestore().collection('chats').doc(taskId).get();
+  return snap.exists ? (snap.data() as ChatThread) : null;
+}
+
+/** Open (or return) the task chat once a helper is assigned. */
+export async function ensureTaskChat(taskId: string): Promise<ChatThread> {
+  const task = await loadTask(taskId);
+  if (!task) throw new Error('Task not found');
+  if (!task.helper_id) {
+    throw new Error('Chat opens after a helper is matched');
+  }
+  const existing = await loadChatThread(taskId);
+  if (existing) return existing;
+
+  const now = new Date().toISOString();
+  const thread: ChatThread = {
+    task_id: taskId,
+    client_id: task.client_id,
+    helper_id: task.helper_id,
+    created_at: now,
+    message_count: 0,
+  };
+  await saveChatThread(thread);
+
+  const welcome: ChatMessage = {
+    id: `msg_${Date.now()}_sys`,
+    task_id: taskId,
+    sender_id: 'system',
+    sender_role: 'system',
+    body:
+      'In-app chat only — every message is safety-checked and saved as evidence. Don’t share phone numbers or move off Zivo.',
+    created_at: now,
+  };
+  if (useMemory) {
+    memChatMessages.set(taskId, [welcome]);
+  } else {
+    await firestore()
+      .collection('chats')
+      .doc(taskId)
+      .collection('messages')
+      .doc(welcome.id)
+      .set(welcome);
+  }
+  thread.message_count = 1;
+  thread.last_message_at = now;
+  thread.last_preview = welcome.body.slice(0, 120);
+  await saveChatThread(thread);
+  return thread;
+}
+
+/** Internal read for Trust Arbitrator (no auth — caller must authorize). */
+export async function listChatMessagesInternal(
+  taskId: string,
+): Promise<ChatMessage[]> {
+  if (useMemory) return [...(memChatMessages.get(taskId) ?? [])];
+  const snap = await firestore()
+    .collection('chats')
+    .doc(taskId)
+    .collection('messages')
+    .orderBy('created_at', 'asc')
+    .limit(200)
+    .get();
+  return snap.docs.map((d) => d.data() as ChatMessage);
+}
+
+export async function listTaskChat(
+  taskId: string,
+  userId: string,
+  afterIso?: string,
+): Promise<{ thread: ChatThread; messages: ChatMessage[] }> {
+  const task = await loadTask(taskId);
+  if (!task) throw new Error('Task not found');
+  assertChatParticipant(task, userId);
+  const thread = await ensureTaskChat(taskId);
+
+  let messages = await listChatMessagesInternal(taskId);
+  if (afterIso) {
+    messages = messages.filter((m) => m.created_at > afterIso);
+  }
+
+  return { thread, messages };
+}
+
+export async function appendSystemChatMessage(
+  taskId: string,
+  body: string,
+): Promise<ChatMessage> {
+  await ensureTaskChat(taskId);
+  const now = new Date().toISOString();
+  const msg: ChatMessage = {
+    id: `msg_${Date.now()}_sys`,
+    task_id: taskId,
+    sender_id: 'system',
+    sender_role: 'system',
+    body: body.slice(0, 2000),
+    created_at: now,
+  };
+  if (useMemory) {
+    const list = memChatMessages.get(taskId) ?? [];
+    list.push(msg);
+    memChatMessages.set(taskId, list);
+  } else {
+    await firestore()
+      .collection('chats')
+      .doc(taskId)
+      .collection('messages')
+      .doc(msg.id)
+      .set(msg);
+  }
+  const thread = (await loadChatThread(taskId))!;
+  thread.last_message_at = now;
+  thread.last_preview = body.slice(0, 120);
+  thread.message_count = (thread.message_count ?? 0) + 1;
+  await saveChatThread(thread);
+  return msg;
+}
+
+export async function sendTaskChatMessage(input: {
+  taskId: string;
+  senderId: string;
+  body: string;
+}): Promise<ChatMessage> {
+  const task = await loadTask(input.taskId);
+  if (!task) throw new Error('Task not found');
+  const role = assertChatParticipant(task, input.senderId);
+  if (!['matched', 'in_progress'].includes(task.status)) {
+    throw new Error('Chat is closed for this job');
+  }
+  const body = sanitizeChatBody(input.body);
+  if (!body) throw new Error('Message cannot be empty');
+
+  await ensureTaskChat(input.taskId);
+  const now = new Date().toISOString();
+  const msg: ChatMessage = {
+    id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    task_id: input.taskId,
+    sender_id: input.senderId,
+    sender_role: role,
+    body,
+    created_at: now,
+  };
+
+  if (useMemory) {
+    const list = memChatMessages.get(input.taskId) ?? [];
+    list.push(msg);
+    memChatMessages.set(input.taskId, list);
+  } else {
+    await firestore()
+      .collection('chats')
+      .doc(input.taskId)
+      .collection('messages')
+      .doc(msg.id)
+      .set(msg);
+  }
+
+  const thread = (await loadChatThread(input.taskId))!;
+  thread.last_message_at = now;
+  thread.last_preview = body.slice(0, 120);
+  thread.message_count = (thread.message_count ?? 0) + 1;
+  await saveChatThread(thread);
+  return msg;
+}
+
+export async function saveTrustReview(
+  review: TrustReview,
+  opts: { applyHold: boolean; escalate: boolean; reason: string },
+): Promise<void> {
+  if (useMemory) {
+    const list = memTrustReviews.get(review.task_id) ?? [];
+    list.push(review);
+    memTrustReviews.set(review.task_id, list);
+  } else {
+    await firestore()
+      .collection('trust_reviews')
+      .doc(review.id)
+      .set(review);
+    await firestore()
+      .collection('tasks')
+      .doc(review.task_id)
+      .collection('trust_reviews')
+      .doc(review.id)
+      .set(review);
+  }
+
+  const task = await loadTask(review.task_id);
+  if (!task) return;
+  task.last_trust_review_id = review.id;
+  if (opts.applyHold) {
+    task.trust_hold = true;
+    task.trust_hold_reason = opts.reason.slice(0, 400);
+  } else if (review.verdict === 'continue') {
+    task.trust_hold = false;
+    task.trust_hold_reason = undefined;
+  }
+  if (opts.escalate) {
+    task.status = 'disputed';
+  }
+  await saveTask(task);
+
+  const label =
+    review.verdict === 'continue'
+      ? 'Trust review: continue'
+      : review.verdict === 'hold_escrow'
+        ? 'Trust review: escrow held'
+        : 'Trust review: escalated';
+  try {
+    await appendSystemChatMessage(
+      review.task_id,
+      `${label} — ${review.summary}`,
+    );
+  } catch {
+    /* chat may not exist yet */
+  }
+}
+
+export async function listTrustReviews(taskId: string): Promise<TrustReview[]> {
+  if (useMemory) {
+    return [...(memTrustReviews.get(taskId) ?? [])].sort((a, b) =>
+      b.created_at.localeCompare(a.created_at),
+    );
+  }
+  const snap = await firestore()
+    .collection('tasks')
+    .doc(taskId)
+    .collection('trust_reviews')
+    .orderBy('created_at', 'desc')
+    .limit(20)
+    .get();
+  return snap.docs.map((d) => d.data() as TrustReview);
 }
 
 export { haversineKm, DISPATCH_RADIUS_KM, PLATFORM_FEE_PERCENT };

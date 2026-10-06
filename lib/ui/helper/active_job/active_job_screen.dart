@@ -17,6 +17,8 @@ import 'package:hyperlocal/blocs/otp/otp_bloc.dart';
 import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
 import 'package:hyperlocal/blocs/task/task_bloc.dart';
 import 'package:hyperlocal/blocs/wallet/wallet_bloc.dart';
+import 'package:hyperlocal/core/router/app_router.dart';
+import 'package:hyperlocal/ui/_shared/trust_review_sheet.dart';
 
 class ActiveJobScreen extends StatefulWidget {
   const ActiveJobScreen({super.key, required this.taskId});
@@ -92,6 +94,15 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
           icon: const Icon(Icons.arrow_back_ios_new_rounded),
           onPressed: () => context.go('/'),
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Chat with client',
+            icon: const Icon(Icons.chat_bubble_outline_rounded),
+            onPressed: () {
+              context.push(AppRoutes.chatFor(widget.taskId));
+            },
+          ),
+        ],
       ),
       body: BlocConsumer<OtpBloc, OtpState>(
         listener: (context, state) {
@@ -163,22 +174,53 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
 
           final isVerifying = state is OtpVerifying;
           final isInProgress = state is OtpStateInProgress;
+          final activeTask = task!;
 
           return SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildStatusBar(task, isInProgress),
+                _buildStatusBar(activeTask, isInProgress),
                 const Gap(20),
-                _buildTaskDetail(task),
+                _buildTaskDetail(activeTask),
+                const Gap(12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => context.push(
+                      AppRoutes.chatFor(
+                        widget.taskId,
+                        title: activeTask.title,
+                      ),
+                    ),
+                    icon: const Icon(Icons.chat_bubble_outline_rounded),
+                    label: const Text('Chat with client'),
+                  ),
+                ),
+                const Gap(8),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () => showTrustReviewSheet(
+                      context,
+                      taskId: widget.taskId,
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.helperAccent,
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: const Icon(Icons.gavel_rounded, size: 18),
+                    label: const Text('Trust Arbitrator'),
+                  ),
+                ),
                 if (isInProgress &&
-                    task.requiresPurchaseProof &&
-                    task.proofSubmittedAt == null) ...[
+                    activeTask.requiresPurchaseProof &&
+                    activeTask.proofSubmittedAt == null) ...[
                   const Gap(16),
-                  _buildProofGate(task),
+                  _buildProofGate(activeTask),
                 ],
-                if (isInProgress && task.proofSubmittedAt != null) ...[
+                if (isInProgress && activeTask.proofSubmittedAt != null) ...[
                   const Gap(12),
                   Container(
                     width: double.infinity,
@@ -188,7 +230,7 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
-                      'Receipt submitted (${AppConfig.money(task.goodsSpent)}). '
+                      'Receipt submitted (${AppConfig.money(activeTask.goodsSpent)}). '
                       'Wait for client to check goods, then enter End OTP.',
                       style: AppTextStyles.bodySmall,
                     ),
@@ -197,7 +239,7 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
                 const Gap(24),
                 _buildOtpInput(
                   state: state,
-                  task: task,
+                  task: activeTask,
                   isVerifying: isVerifying,
                   isInProgress: isInProgress,
                   errorMessage: errorMessage,
@@ -227,7 +269,7 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
           const Gap(6),
           Text(
             'Pillar B: photograph the till receipt + confirm the shopping list. '
-            'Gemini reconciles items / anomalies / total vs budget '
+            'Receipt check reconciles items / anomalies / total vs budget '
             '(${AppConfig.money(task.goodsBudget)}). Never take cash from the client.',
             style: AppTextStyles.bodySmall,
           ),
@@ -274,7 +316,7 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
                   children: [
                     Text(
                       'Demo: photograph a messy/crumpled receipt. Keyword OCR often fails; '
-                      'Gemini returns matched / missing / anomalies / total vs budget.',
+                      'Shows matched / missing / anomalies / total vs budget.',
                       style: AppTextStyles.bodySmall
                           .copyWith(color: AppColors.textMuted, fontSize: 11),
                     ),

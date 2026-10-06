@@ -35,10 +35,13 @@ flutter run -d chrome --web-port=7357 \
   --dart-define=GCP_API_BASE_URL=http://localhost:8080
 ```
 
-## Pillars
+## Pillars (Cup differentiators)
 
 | Pillar | Where |
 |--------|--------|
-| A Vernacular safety | Task create → `POST /tasks/safety-check` |
+| A Vernacular safety | Task create + **every chat message** → `POST /tasks/safety-check` / `POST /tasks/:id/chat` |
 | B Receipt multimodal | Active job proof → `POST /tasks/:id/receipt` |
 | C Constraint match | Helper accept → `POST /tasks/:id/match` |
+| Trust Arbitrator | Chat + timeline + vouch → `POST /tasks/:id/trust-review` (can **hold escrow**) |
+
+Rails (not the headline): Instant Dispatch, street batching, neighbor vouch, in-app chat evidence.

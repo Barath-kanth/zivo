@@ -11,6 +11,7 @@ import 'package:hyperlocal/ui/client/task_tracking/task_tracking_screen.dart';
 import 'package:hyperlocal/ui/client/wallet/wallet_screen.dart';
 import 'package:hyperlocal/ui/helper/job_feed/job_feed_screen.dart';
 import 'package:hyperlocal/ui/helper/active_job/active_job_screen.dart';
+import 'package:hyperlocal/ui/_shared/task_chat_screen.dart';
 import 'package:hyperlocal/ui/account/account_screen.dart';
 import 'package:hyperlocal/ui/account/settings_screen.dart';
 import 'package:hyperlocal/ui/account/qualifications_screen.dart';
@@ -27,8 +28,15 @@ abstract class AppRoutes {
   static const String shell = '/';
   static const String createTask = '/task/create';
   static const String trackTask = '/task/:taskId/track';
+  static const String taskChat = '/task/:taskId/chat';
   static const String activeJob = '/job/:taskId/active';
   static const String wallet = '/wallet';
+
+  static String chatFor(String taskId, {String? title}) {
+    final base = '/task/$taskId/chat';
+    if (title == null || title.isEmpty) return base;
+    return '$base?title=${Uri.encodeComponent(title)}';
+  }
   static const String jobFeed = '/jobs';
   static const String account = '/account';
   static const String settings = '/settings';
@@ -239,6 +247,18 @@ class AppRouter {
         ),
       ),
       GoRoute(
+        path: AppRoutes.taskChat,
+        name: 'taskChat',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (ctx, state) => _slideTransition(
+          state,
+          TaskChatScreen(
+            taskId: state.pathParameters['taskId']!,
+            taskTitle: state.uri.queryParameters['title'],
+          ),
+        ),
+      ),
+      GoRoute(
         path: AppRoutes.activeJob,
         name: 'activeJob',
         parentNavigatorKey: rootNavigatorKey,
@@ -275,6 +295,7 @@ class AppRouter {
     if (loc == AppRoutes.admin) return true;
     if (loc == AppRoutes.onboarding) return true;
     if (loc.startsWith('/task/') && loc.endsWith('/track')) return true;
+    if (loc.startsWith('/task/') && loc.endsWith('/chat')) return true;
     if (loc.startsWith('/job/') && loc.endsWith('/active')) return true;
     return false;
   }

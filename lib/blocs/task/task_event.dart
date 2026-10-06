@@ -23,10 +23,29 @@ class TaskFetchNearbyTasks extends TaskEvent {}
 class TaskFetchHelperActive extends TaskEvent {}
 
 class TaskCreate extends TaskEvent {
-  const TaskCreate(this.task);
+  const TaskCreate(
+    this.task, {
+    this.deadlineAt,
+    this.clientBoostLkr = 0,
+    this.travelKm,
+    this.urgency = 'normal',
+    this.contextFields,
+  });
   final Task task;
+  final String? deadlineAt;
+  final int clientBoostLkr;
+  final double? travelKm;
+  final String urgency;
+  final Map<String, dynamic>? contextFields;
   @override
-  List<Object?> get props => [task];
+  List<Object?> get props => [
+        task,
+        deadlineAt,
+        clientBoostLkr,
+        travelKm,
+        urgency,
+        contextFields,
+      ];
 }
 
 class TaskAccept extends TaskEvent {

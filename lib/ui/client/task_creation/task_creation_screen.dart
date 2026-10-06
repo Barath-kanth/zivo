@@ -40,8 +40,14 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
 
   TaskCategory? _selectedCategory;
   double _estimatedHours = 1.0;
-  double _hourlyRate = 700.0; // LKR default via AppConfig display
+  double _hourlyRate = 700.0; // derived from fair labor / hours
   double _goodsBudget = 0;
+  int _clientBoostLkr = 0;
+  String _urgency = 'normal';
+  Map<String, dynamic>? _priceQuote;
+  bool _quoting = false;
+  String? _quoteError;
+  final _boostCtrl = TextEditingController();
   final List<TextEditingController> _itemNameCtrls = [];
   final List<TextEditingController> _itemQtyCtrls = [];
   LatLng? _pickedLocation;
@@ -50,8 +56,15 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
   final _picker = ImagePicker();
   final List<Uint8List> _photoBytes = [];
   static const _maxPhotos = 5;
-  Map<String, dynamic>? _pillarA;
-  bool _pillarALoading = false;
+  /// Background safety only — never shown as a technical panel.
+  bool _safetyBlocked = false;
+  String? _safetyMessage;
+  List<Map<String, dynamic>> _pricingFields = const [];
+  final Map<String, dynamic> _fieldValues = {};
+  final Map<String, TextEditingController> _fieldCtrls = {};
+  bool _fieldsLoading = false;
+  String _fieldsHeadline = 'A few details for a fair price';
+  String _fieldsNote = '';
 
   // Sri Lankan cities
   static const _cityPresets = [
@@ -131,13 +144,180 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
     _titleCtrl.dispose();
     _descCtrl.dispose();
     _locationLabelCtrl.dispose();
+    _boostCtrl.dispose();
     for (final c in _itemNameCtrls) {
       c.dispose();
     }
     for (final c in _itemQtyCtrls) {
       c.dispose();
     }
+    for (final c in _fieldCtrls.values) {
+      c.dispose();
+    }
     super.dispose();
+  }
+
+  Map<String, dynamic> _collectContextFields() {
+    final out = <String, dynamic>{};
+    for (final f in _pricingFields) {
+      final id = f['id']?.toString();
+      if (id == null) continue;
+      final type = f['type']?.toString() ?? 'text';
+      if (type == 'boolean') {
+        out[id] = _fieldValues[id] == true;
+      } else if (type == 'number') {
+        final raw = _fieldCtrls[id]?.text.trim() ?? '${_fieldValues[id] ?? ''}';
+        out[id] = num.tryParse(raw) ?? raw;
+      } else if (type == 'date') {
+        final v = _fieldValues[id];
+        if (v is DateTime) {
+          out[id] = v.toUtc().toIso8601String();
+        } else if (v != null) {
+          out[id] = v.toString();
+        }
+      } else if (type == 'select') {
+        out[id] = _fieldValues[id] ?? _fieldCtrls[id]?.text;
+      } else {
+        out[id] = _fieldCtrls[id]?.text.trim() ?? _fieldValues[id];
+      }
+    }
+    out.removeWhere((k, v) => v == null || (v is String && v.isEmpty));
+    return out;
+  }
+
+  String? _deadlineIso() {
+    final ctx = _collectContextFields();
+    final d = ctx['deadline_at'];
+    if (d is String && d.isNotEmpty) return d;
+    return DateTime.now().add(const Duration(hours: 24)).toUtc().toIso8601String();
+  }
+
+  Future<void> _loadPricingFields() async {
+    final desc = _descCtrl.text.trim();
+    if (desc.length < 20 || _selectedCategory == null) return;
+    setState(() => _fieldsLoading = true);
+    try {
+      final res = await context.read<TaskRepository>().pricingFields(
+            title: _titleCtrl.text.trim(),
+            description: desc,
+            category: _selectedCategory!.name,
+          );
+      if (!mounted) return;
+      final fields = ((res['fields'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      for (final c in _fieldCtrls.values) {
+        c.dispose();
+      }
+      _fieldCtrls.clear();
+      _fieldValues.clear();
+      for (final f in fields) {
+        final id = f['id']?.toString();
+        if (id == null) continue;
+        final type = f['type']?.toString() ?? 'text';
+        final def = f['default_value'];
+        if (type == 'boolean') {
+          _fieldValues[id] = def == true || def == 'true';
+        } else if (type == 'date') {
+          _fieldValues[id] =
+              DateTime.now().add(const Duration(hours: 24));
+        } else if (type == 'select') {
+          _fieldValues[id] = def?.toString() ??
+              ((f['options'] as List?)?.first?.toString() ?? '');
+        } else {
+          _fieldCtrls[id] = TextEditingController(
+            text: def == null ? '' : '$def',
+          );
+        }
+      }
+      setState(() {
+        _pricingFields = fields;
+        _fieldsHeadline =
+            res['headline']?.toString() ?? 'A few details for a fair price';
+        _fieldsNote = res['note']?.toString() ?? '';
+        _fieldsLoading = false;
+      });
+      await _refreshFairQuote();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _fieldsLoading = false;
+        _quoteError = '$e';
+      });
+    }
+  }
+
+  Future<void> _refreshFairQuote() async {
+    final desc = _descCtrl.text.trim();
+    final loc = _pickedLocation;
+    if (desc.length < 20 || loc == null || _selectedCategory == null) {
+      setState(() {
+        _quoteError = desc.length < 20
+            ? 'Description must be at least 20 characters'
+            : 'Pick a location first';
+        _priceQuote = null;
+      });
+      return;
+    }
+    setState(() {
+      _quoting = true;
+      _quoteError = null;
+    });
+    try {
+      final ctx = _collectContextFields();
+      final q = await context.read<TaskRepository>().priceQuote(
+            title: _titleCtrl.text.trim(),
+            description: desc,
+            category: _selectedCategory!.name,
+            lat: loc.latitude,
+            lon: loc.longitude,
+            urgency: _urgency,
+            deadlineAt: _deadlineIso(),
+            clientBoostLkr: _clientBoostLkr,
+            contextFields: ctx,
+          );
+      if (!mounted) return;
+      final labor = (q['labor_lkr'] as num?)?.toDouble();
+      final hours = (q['duration_hours'] as num?)?.toDouble() ?? _estimatedHours;
+      setState(() {
+        _priceQuote = q;
+        _quoting = false;
+        _estimatedHours = hours;
+        if (labor != null && hours > 0) {
+          _hourlyRate = labor / hours;
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _quoting = false;
+        _quoteError = '$e';
+        _priceQuote = null;
+      });
+    }
+  }
+
+  Future<void> _runSafetyInBackground() async {
+    try {
+      final safety = await context.read<TaskRepository>().safetyCheck(
+            title: _titleCtrl.text.trim().isEmpty
+                ? '(no title)'
+                : _titleCtrl.text.trim(),
+            description: _descCtrl.text.trim(),
+          );
+      if (!mounted) return;
+      final allowed = safety['allowed'] != false;
+      setState(() {
+        _safetyBlocked = !allowed;
+        _safetyMessage = allowed
+            ? null
+            : (safety['reasoning']?.toString() ??
+                'This request doesn’t meet community guidelines');
+      });
+    } catch (_) {
+      /* don’t block UX on background check failure */
+    }
   }
 
   bool get _needsPurchaseTrust =>
@@ -176,37 +356,24 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       _pickedLocation = null;
       _estimatedHours = 1.0;
       _hourlyRate = 700.0;
+      _clientBoostLkr = 0;
+      _urgency = 'normal';
+      _priceQuote = null;
+      _quoteError = null;
+      _boostCtrl.clear();
       _livePolicyWarning = null;
       _photoBytes.clear();
-      _pillarA = null;
+      _safetyBlocked = false;
+      _safetyMessage = null;
+      _pricingFields = const [];
+      _fieldsHeadline = 'A few details for a fair price';
+      _fieldsNote = '';
+      for (final c in _fieldCtrls.values) {
+        c.dispose();
+      }
+      _fieldCtrls.clear();
+      _fieldValues.clear();
     });
-  }
-
-  Future<void> _runPillarACheck() async {
-    if (_titleCtrl.text.trim().isEmpty && _descCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter a title or details first')),
-      );
-      return;
-    }
-    setState(() => _pillarALoading = true);
-    try {
-      final safety = await context.read<TaskRepository>().safetyCheck(
-            title: _titleCtrl.text.trim().isEmpty
-                ? '(no title)'
-                : _titleCtrl.text.trim(),
-            description: _descCtrl.text.trim(),
-          );
-      if (!mounted) return;
-      setState(() => _pillarA = safety);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Pillar A check failed: $e')),
-      );
-    } finally {
-      if (mounted) setState(() => _pillarALoading = false);
-    }
   }
 
   Future<void> _addPhotos() async {
@@ -366,25 +533,20 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       return;
     }
 
-    // Pillar A — GCP Gemini vernacular safety (Cloud Run)
+    // Community safety (background tech — user-facing copy only).
     try {
       final safety = await context.read<TaskRepository>().safetyCheck(
             title: _titleCtrl.text,
             description: _descCtrl.text,
           );
-      if (mounted) setState(() => _pillarA = safety);
       if (safety['allowed'] != true) {
         final reasoning = safety['reasoning']?.toString() ??
             (safety['reasons'] as List?)?.join(' · ') ??
-            'Blocked by vernacular safety (Pillar A)';
-        final kw = (safety['keyword_filter'] as Map?)?['note']?.toString();
+            'This request doesn’t meet community guidelines';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              [
-                if (kw != null) kw,
-                'Gemini: ${safety['action'] ?? 'block'} — $reasoning',
-              ].join('\n'),
+              reasoning,
               style: const TextStyle(color: Colors.white),
             ),
             backgroundColor: AppColors.errorColor,
@@ -471,6 +633,8 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       }
     }
 
+    final labor = (_priceQuote?['labor_lkr'] as num?)?.toDouble() ??
+        (_estimatedHours * _hourlyRate);
     final task = Task(
       id: '',
       clientId: auth.profile.id,
@@ -479,7 +643,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       category: _selectedCategory!,
       estimatedHours: _estimatedHours,
       hourlyRate: _hourlyRate,
-      totalAmount: _estimatedHours * _hourlyRate,
+      totalAmount: labor,
       location: _pickedLocation!,
       locationAddress: _locationLabelCtrl.text.trim().isEmpty
           ? null
@@ -495,7 +659,14 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       photoPaths: photoPaths,
     );
     if (!mounted) return;
-    context.read<TaskBloc>().add(TaskCreate(task));
+    final ctx = _collectContextFields();
+    context.read<TaskBloc>().add(TaskCreate(
+          task,
+          deadlineAt: _deadlineIso(),
+          clientBoostLkr: _clientBoostLkr,
+          urgency: _urgency,
+          contextFields: ctx,
+        ));
   }
 
   @override
@@ -774,7 +945,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             ),
 
             const Gap(18),
-            _FieldLabel('More Details'),
+            _FieldLabel('More Details (required · min 20 chars)'),
             const Gap(8),
             TextFormField(
               controller: _descCtrl,
@@ -782,16 +953,22 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
               style: AppTextStyles.bodyLarge,
               decoration: InputDecoration(
                 hintText:
-                    'Timing, requirements, what to bring…',
+                    'Describe the full job — what to do, where, any delivery, size, timing…',
                 alignLabelWithHint: true,
+                helperText:
+                    'Next we’ll ask only the details needed to price this task',
                 prefixIcon: const Padding(
                   padding: EdgeInsets.only(bottom: 60),
                   child: Icon(Icons.notes_rounded,
                       color: AppColors.textMuted, size: 18),
                 ),
               ),
-              validator: (v) =>
-                  (v?.trim().isEmpty ?? true) ? 'Please add details' : null,
+              validator: (v) {
+                final t = v?.trim() ?? '';
+                if (t.isEmpty) return 'Please add details';
+                if (t.length < 20) return 'At least 20 characters required';
+                return null;
+              },
             ),
 
             const Gap(18),
@@ -920,153 +1097,28 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
               ),
             ],
 
-            const Gap(16),
-            _buildPillarACard(color),
-
-            const Gap(16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.07),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: color.withValues(alpha: 0.18)),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.lightbulb_outline_rounded,
-                      color: color, size: 15),
-                  const Gap(8),
-                  Expanded(
-                    child: Text(
-                      'Demo tip: try an euphemistic ask like “discreet special package pickup, no questions” — keyword filter often ALLOWs; Pillar A should BLOCK with reasoning.',
-                      style: AppTextStyles.bodySmall
-                          .copyWith(color: color, fontSize: 11),
-                    ),
+            if (_safetyBlocked && _safetyMessage != null) ...[
+              const Gap(16),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.errorColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppColors.errorColor.withValues(alpha: 0.35),
                   ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPillarACard(Color color) {
-    final a = _pillarA;
-    final keyword = a?['keyword_filter'] as Map?;
-    final allowed = a?['allowed'] == true;
-    final action = a?['action']?.toString() ?? (allowed ? 'allow' : 'block');
-    final mode = a?['mode']?.toString() ?? '—';
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.cardElevated,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.borderColor),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.shield_moon_outlined, color: color, size: 18),
-              const Gap(8),
-              Expanded(
+                ),
                 child: Text(
-                  'Pillar A · Vernacular safety',
-                  style: AppTextStyles.headingSmall.copyWith(fontSize: 13),
-                ),
-              ),
-              TextButton(
-                onPressed: _pillarALoading ? null : _runPillarACheck,
-                child: _pillarALoading
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Run check'),
-              ),
-            ],
-          ),
-          Text(
-            'Gemini structured classifier over Sinhala–English (no translate-first).',
-            style: AppTextStyles.bodySmall
-                .copyWith(color: AppColors.textMuted, fontSize: 11),
-          ),
-          if (a != null) ...[
-            const Gap(12),
-            _pillarRow(
-              'Keyword filter',
-              keyword?['note']?.toString() ??
-                  (keyword?['allowed'] == true ? 'ALLOW' : 'BLOCK'),
-              keyword?['allowed'] == true
-                  ? AppColors.warningColor
-                  : AppColors.errorColor,
-            ),
-            const Gap(6),
-            _pillarRow(
-              'Gemini action',
-              '${action.toUpperCase()} · ${a['risk_category'] ?? '—'} · conf ${(a['confidence'] as num?)?.toStringAsFixed(2) ?? '—'} · $mode',
-              allowed
-                  ? AppColors.successColor
-                  : action == 'review'
-                      ? AppColors.warningColor
-                      : AppColors.errorColor,
-            ),
-            if (a['reasoning'] != null) ...[
-              const Gap(8),
-              Text(
-                a['reasoning'].toString(),
-                style: AppTextStyles.bodySmall.copyWith(fontSize: 12),
-              ),
-            ],
-            if (a['research_note'] != null) ...[
-              const Gap(8),
-              Text(
-                a['research_note'].toString(),
-                style: AppTextStyles.bodySmall.copyWith(
-                  color: AppColors.textMuted,
-                  fontSize: 10,
+                  _safetyMessage!,
+                  style: AppTextStyles.bodySmall
+                      .copyWith(color: AppColors.errorColor),
                 ),
               ),
             ],
           ],
-        ],
+        ),
       ),
-    );
-  }
-
-  Widget _pillarRow(String label, String value, Color accent) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 8,
-          height: 8,
-          margin: const EdgeInsets.only(top: 4),
-          decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
-        ),
-        const Gap(8),
-        Expanded(
-          child: RichText(
-            text: TextSpan(
-              style: AppTextStyles.bodySmall.copyWith(fontSize: 11),
-              children: [
-                TextSpan(
-                  text: '$label: ',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                TextSpan(text: value),
-              ],
-            ),
-          ),
-        ),
-      ],
     );
   }
 
@@ -1196,9 +1248,130 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
 
   // ── Step 3: Pricing & review ──────────────────────────────────────────────
 
+  Widget _buildDynamicField(Map<String, dynamic> f) {
+    final id = f['id']?.toString() ?? '';
+    final label = f['label']?.toString() ?? id;
+    final type = f['type']?.toString() ?? 'text';
+    final unit = f['unit']?.toString();
+    final help = f['help']?.toString();
+    final required = f['required'] == true;
+
+    if (type == 'boolean') {
+      return SwitchListTile.adaptive(
+        contentPadding: EdgeInsets.zero,
+        title: Text(label, style: AppTextStyles.bodyMedium),
+        subtitle: help != null
+            ? Text(help, style: AppTextStyles.bodySmall)
+            : null,
+        value: _fieldValues[id] == true,
+        onChanged: (v) {
+          setState(() => _fieldValues[id] = v);
+          _refreshFairQuote();
+        },
+      );
+    }
+
+    if (type == 'select') {
+      final options =
+          ((f['options'] as List?) ?? const []).map((e) => '$e').toList();
+      final current = _fieldValues[id]?.toString() ??
+          (options.isNotEmpty ? options.first : '');
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _FieldLabel(required ? '$label *' : label),
+          const Gap(6),
+          Wrap(
+            spacing: 6,
+            children: [
+              for (final o in options)
+                ChoiceChip(
+                  label: Text(o),
+                  selected: current == o,
+                  onSelected: (_) {
+                    setState(() => _fieldValues[id] = o);
+                    _refreshFairQuote();
+                  },
+                ),
+            ],
+          ),
+        ],
+      );
+    }
+
+    if (type == 'date') {
+      final dt = _fieldValues[id] is DateTime
+          ? _fieldValues[id] as DateTime
+          : DateTime.now().add(const Duration(hours: 24));
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _FieldLabel(required ? '$label *' : label),
+          const Gap(6),
+          OutlinedButton.icon(
+            onPressed: () async {
+              final date = await showDatePicker(
+                context: context,
+                initialDate: dt,
+                firstDate: DateTime.now(),
+                lastDate: DateTime.now().add(const Duration(days: 60)),
+              );
+              if (date == null || !mounted) return;
+              final time = await showTimePicker(
+                context: context,
+                initialTime: TimeOfDay.fromDateTime(dt),
+              );
+              if (time == null || !mounted) return;
+              setState(() {
+                _fieldValues[id] = DateTime(
+                  date.year,
+                  date.month,
+                  date.day,
+                  time.hour,
+                  time.minute,
+                );
+              });
+              _refreshFairQuote();
+            },
+            icon: const Icon(Icons.event_rounded, size: 18),
+            label: Text(
+              '${dt.year}-${dt.month.toString().padLeft(2, '0')}-'
+              '${dt.day.toString().padLeft(2, '0')} '
+              '${dt.hour.toString().padLeft(2, '0')}:'
+              '${dt.minute.toString().padLeft(2, '0')}',
+            ),
+          ),
+        ],
+      );
+    }
+
+    _fieldCtrls.putIfAbsent(id, () => TextEditingController());
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _FieldLabel(required ? '$label *' : label),
+        const Gap(6),
+        TextField(
+          controller: _fieldCtrls[id],
+          keyboardType: type == 'number'
+              ? const TextInputType.numberWithOptions(decimal: true)
+              : TextInputType.text,
+          decoration: InputDecoration(
+            hintText: help,
+            suffixText: unit,
+          ),
+          onChanged: (_) {},
+          onEditingComplete: _refreshFairQuote,
+        ),
+      ],
+    );
+  }
+
   Widget _buildStep3Pricing() {
     if (_selectedCategory == null) return const SizedBox.shrink();
-    final total = _estimatedHours * _hourlyRate;
+    final floor = (_priceQuote?['gemini_labor_lkr'] as num?)?.toDouble();
+    final total = (_priceQuote?['labor_lkr'] as num?)?.toDouble() ??
+        (_estimatedHours * _hourlyRate);
     final helperEarns = total * 0.9;
     final escrowAll = total + (_needsPurchaseTrust ? _goodsBudget : 0);
     final color = _catColor;
@@ -1208,60 +1381,117 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Set Duration & Pay',
-              style: AppTextStyles.displayMedium.copyWith(fontSize: 20))
-              .animate().fadeIn(duration: 280.ms),
+          Text(
+            _fieldsHeadline,
+            style: AppTextStyles.displayMedium.copyWith(fontSize: 20),
+          ).animate().fadeIn(duration: 280.ms),
           const Gap(4),
-          Text('Choose how long you need help and what you\'ll pay per hour.',
-              style: AppTextStyles.bodyMedium),
-          const Gap(24),
+          Text(
+            _fieldsNote.isEmpty
+                ? 'Answer what’s relevant for this job. You can accept the fair price or add a tip — not lower it.'
+                : _fieldsNote,
+            style: AppTextStyles.bodyMedium,
+          ),
+          const Gap(20),
 
-          // Hours slider
-          _FieldLabel('How long do you need?'),
-          const Gap(6),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                '${_estimatedHours.toStringAsFixed(1)} hr${_estimatedHours == 1 ? '' : 's'}',
-                style: AppTextStyles.headingSmall.copyWith(color: color),
-              ),
-              Text('Max 12 hrs', style: AppTextStyles.bodySmall),
+          if (_fieldsLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+            )
+          else ...[
+            for (final f in _pricingFields) ...[
+              _buildDynamicField(f),
+              const Gap(14),
             ],
+          ],
+
+          _FieldLabel('Optional tip for the helper'),
+          const Gap(6),
+          TextField(
+            controller: _boostCtrl,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              hintText: '0 = accept fair price',
+              prefixText: 'LKR ',
+            ),
+            onChanged: (v) {
+              _clientBoostLkr = int.tryParse(v.trim()) ?? 0;
+              if (_clientBoostLkr < 0) _clientBoostLkr = 0;
+            },
+            onEditingComplete: _refreshFairQuote,
           ),
-          Slider(
-            value: _estimatedHours,
-            min: 0.5,
-            max: 12,
-            divisions: 23,
-            activeColor: color,
-            inactiveColor: AppColors.borderColor,
-            onChanged: (v) => setState(() => _estimatedHours = v),
+          const Gap(10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: (_quoting || _fieldsLoading) ? null : _refreshFairQuote,
+              icon: _quoting
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh_rounded, size: 18),
+              label: Text(_quoting ? 'Updating price…' : 'Update fair price'),
+            ),
           ),
 
-          const Gap(16),
-          // Rate slider
-          _FieldLabel('Hourly Rate (LKR)'),
-          const Gap(6),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'LKR ${_hourlyRate.toStringAsFixed(2)}/hr',
-                style: AppTextStyles.headingSmall
-                    .copyWith(color: AppColors.accentSecondary),
+          if (_quoteError != null) ...[
+            const Gap(8),
+            Text(_quoteError!,
+                style: AppTextStyles.bodySmall
+                    .copyWith(color: AppColors.errorColor)),
+          ],
+
+          const Gap(14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppColors.accent.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: AppColors.accent.withValues(alpha: 0.25),
               ),
-              Text('Min LKR 300/hr', style: AppTextStyles.bodySmall),
-            ],
-          ),
-          Slider(
-            value: _hourlyRate,
-            min: 300,
-            max: 5000,
-            divisions: 47,
-            activeColor: AppColors.accentSecondary,
-            inactiveColor: AppColors.borderColor,
-            onChanged: (v) => setState(() => _hourlyRate = v),
+            ),
+            child: _quoting
+                ? const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(12),
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _priceQuote == null
+                            ? 'Fill the details above to see your fair price'
+                            : 'Pay LKR ${total.toStringAsFixed(0)}',
+                        style: AppTextStyles.headingSmall.copyWith(fontSize: 16),
+                      ),
+                      if (floor != null) ...[
+                        const Gap(4),
+                        Text(
+                          'Fair floor LKR ${floor.toStringAsFixed(0)}'
+                          '${_clientBoostLkr > 0 ? ' + tip $_clientBoostLkr' : ''}'
+                          ' · helpers are protected from undercuts',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textMuted,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                      if (_priceQuote?['explanation'] != null) ...[
+                        const Gap(6),
+                        Text(
+                          '${_priceQuote!['explanation']}',
+                          style: AppTextStyles.bodySmall.copyWith(fontSize: 11),
+                        ),
+                      ],
+                    ],
+                  ),
           ),
 
           if (_needsPurchaseTrust) ...[
@@ -1394,12 +1624,37 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                   ],
                 ),
                 const Divider(height: 22),
-                _ReviewRow('Duration',
-                    '${_estimatedHours.toStringAsFixed(1)} hr'),
-                _ReviewRow('Rate',
-                    '${AppConfig.currencyCode} ${_hourlyRate.toStringAsFixed(2)}/hr'),
+                ...() {
+                  final ctx = _collectContextFields();
+                  final rows = <Widget>[];
+                  for (final f in _pricingFields) {
+                    final id = f['id']?.toString();
+                    if (id == null || !ctx.containsKey(id)) continue;
+                    final label = f['label']?.toString() ?? id;
+                    var val = ctx[id];
+                    if (val is DateTime) {
+                      val =
+                          '${val.month}/${val.day} ${val.hour.toString().padLeft(2, '0')}:${val.minute.toString().padLeft(2, '0')}';
+                    } else if (val is bool) {
+                      val = val ? 'Yes' : 'No';
+                    }
+                    final unit = f['unit']?.toString();
+                    rows.add(_ReviewRow(
+                      label,
+                      unit != null && unit.isNotEmpty ? '$val $unit' : '$val',
+                    ));
+                    if (rows.length >= 6) break;
+                  }
+                  if (rows.isEmpty) {
+                    rows.add(_ReviewRow(
+                      'Est. time',
+                      '${_estimatedHours.toStringAsFixed(1)} hr',
+                    ));
+                  }
+                  return rows;
+                }(),
                 const Divider(height: 18),
-                _ReviewRow('Labor fee', AppConfig.money(total), bold: true),
+                _ReviewRow('Labor', AppConfig.money(total), bold: true),
                 if (_needsPurchaseTrust)
                   _ReviewRow('Goods budget', AppConfig.money(_goodsBudget)),
                 if (_needsPurchaseTrust)
@@ -1430,7 +1685,9 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                     return SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: loading ? null : _submit,
+                        onPressed: loading || _quoting || _priceQuote == null
+                            ? null
+                            : _submit,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: color,
                           foregroundColor: Colors.white,
@@ -1487,7 +1744,9 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             elevation: 0,
           ),
           child: Text(
-            _step == 1 ? 'Continue — Add Location' : 'Continue — Set Pricing',
+            _step == 1
+                ? 'Continue — Add Location'
+                : 'Continue — Fair price',
             style: AppTextStyles.buttonLabel
                 .copyWith(color: Colors.white, fontSize: 14),
           ),
@@ -1499,6 +1758,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
   void _onNext() {
     if (_step == 1) {
       if (_formKey.currentState?.validate() ?? false) {
+        _runSafetyInBackground();
         setState(() => _step = 2);
       }
     } else if (_step == 2) {
@@ -1508,7 +1768,17 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
         );
         return;
       }
+      if (_safetyBlocked) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_safetyMessage ?? 'This request can’t be posted'),
+            backgroundColor: AppColors.errorColor,
+          ),
+        );
+        return;
+      }
       setState(() => _step = 3);
+      _loadPricingFields();
     }
   }
 }

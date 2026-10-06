@@ -9,8 +9,10 @@ import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/data/models/task.dart';
 import 'package:hyperlocal/data/models/task_status.dart';
 import 'package:hyperlocal/blocs/task/task_bloc.dart';
+import 'package:hyperlocal/core/router/app_router.dart';
 import 'package:hyperlocal/ui/_shared/task_status_badge.dart';
 import 'package:hyperlocal/ui/_shared/empty_state_widget.dart';
+import 'package:hyperlocal/ui/_shared/trust_review_sheet.dart';
 
 class TaskTrackingScreen extends StatefulWidget {
   const TaskTrackingScreen({super.key, required this.taskId});
@@ -52,6 +54,15 @@ class _TaskTrackingScreenState extends State<TaskTrackingScreen> {
             }
           },
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Chat with helper',
+            icon: const Icon(Icons.chat_bubble_outline_rounded),
+            onPressed: () {
+              context.push(AppRoutes.chatFor(widget.taskId));
+            },
+          ),
+        ],
       ),
       body: BlocBuilder<OtpBloc, OtpState>(
         builder: (context, state) {
@@ -76,19 +87,54 @@ class _TaskTrackingScreenState extends State<TaskTrackingScreen> {
           }
 
           if (task == null) return const SizedBox.shrink();
+          final t = task;
 
           return CustomScrollView(
             slivers: [
-              _buildMapSliver(task),
+              _buildMapSliver(t),
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.all(20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _buildTaskSummary(task),
+                      _buildTaskSummary(t),
+                      if (t.status == TaskStatus.matched ||
+                          t.status == TaskStatus.inProgress ||
+                          t.status == TaskStatus.completed) ...[
+                        const Gap(12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: () => context.push(
+                              AppRoutes.chatFor(
+                                widget.taskId,
+                                title: t.title,
+                              ),
+                            ),
+                            icon: const Icon(Icons.chat_bubble_outline_rounded),
+                            label: const Text('Chat with helper'),
+                          ),
+                        ),
+                      ],
+                      if (t.status == TaskStatus.matched ||
+                          t.status == TaskStatus.inProgress ||
+                          t.status == TaskStatus.disputed) ...[
+                        const Gap(8),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () => showTrustReviewSheet(
+                              context,
+                              taskId: widget.taskId,
+                            ),
+                            icon: const Icon(Icons.gavel_rounded, size: 18),
+                            label: const Text('Trust Arbitrator'),
+                          ),
+                        ),
+                      ],
                       const Gap(20),
-                      _buildOtpSection(state, task),
+                      _buildOtpSection(state, t),
                     ],
                   ),
                 ),

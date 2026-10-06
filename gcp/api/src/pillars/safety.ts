@@ -100,10 +100,10 @@ function mockGeminiStructured(input: SafetyInput, keyword: { allowed: boolean; m
     reasons: block
       ? [
           euphemism
-            ? 'Adversarial/euphemistic phrasing caught by vernacular classifier (keyword filter missed it)'
-            : 'Prohibited category',
+            ? 'This request looks unsafe for a neighborhood help marketplace'
+            : 'This request isn’t allowed on Zivo',
         ]
-      : ['No policy violation detected'],
+      : ['Looks fine'],
     languageDetected: hasSinhala ? 'si/mixed' : input.languageHint ?? 'en',
     pillar: 'A',
     mode: 'mock',
@@ -115,19 +115,10 @@ function mockGeminiStructured(input: SafetyInput, keyword: { allowed: boolean; m
     confidence: block ? 0.86 : 0.7,
     reasoning: block
       ? euphemism
-        ? 'Native Singlish/euphemism analysis: “discreet / no questions / special package” patterns align with cash-mule or illicit handoff — keyword filter returned ALLOW; classifier BLOCK.'
-        : `Keyword + mock classifier blocked: ${keyword.matched.join(', ')}`
+        ? 'This request looks unsafe for a neighborhood help marketplace'
+        : 'This request isn’t allowed on Zivo'
       : 'Looks like ordinary neighborhood help.',
     action: block ? 'block' : 'allow',
-    keyword_filter: {
-      allowed: keyword.allowed,
-      matched: keyword.matched,
-      note: keyword.allowed
-        ? 'Naive keyword filter: ALLOW (no English keyword hit)'
-        : `Naive keyword filter: BLOCK (${keyword.matched.join(', ')})`,
-    },
-    research_note:
-      'Aziz, Hanif & Koto (2026): refusal action drops ~87.9% EN → ~43.9% low-resource (incl. Sinhala) — action-layer vernacular safety is required.',
   };
 }
 
@@ -152,7 +143,7 @@ export async function checkTaskSafety(input: SafetyInput): Promise<SafetyResult>
     return {
       allowed,
       risk,
-      reasons: [g.reasoning || 'Gemini vernacular classifier'],
+      reasons: [g.reasoning || 'Community safety check'],
       languageDetected: g.language_detected || input.languageHint || 'unknown',
       pillar: 'A',
       mode: 'gemini',
@@ -160,27 +151,15 @@ export async function checkTaskSafety(input: SafetyInput): Promise<SafetyResult>
       confidence: g.confidence,
       reasoning: g.reasoning,
       action,
-      keyword_filter: {
-        allowed: keyword.allowed,
-        matched: keyword.matched,
-        note: keyword.allowed
-          ? 'Naive keyword filter: ALLOW'
-          : `Naive keyword filter: BLOCK (${keyword.matched.join(', ')})`,
-      },
-      research_note:
-        'Aziz, Hanif & Koto (2026): EN refusal ~87.9% vs ~43.9% low-resource incl. Sinhala — models may “know” harm but fail to act; Zivo enforces the action layer natively on code-switched text.',
     };
-  } catch (err) {
+  } catch {
     const fallback = mockGeminiStructured(input, keyword);
     return {
       ...fallback,
       mode: 'mock',
-      reasons: [
-        ...fallback.reasons,
-        `Gemini unavailable, mock classifier used: ${
-          err instanceof Error ? err.message : 'error'
-        }`,
-      ],
+      reasons: fallback.reasons.map((r) =>
+        r.replace(/\bgemini\b/gi, 'safety').replace(/\bvernacular classifier\b/gi, 'check'),
+      ),
     };
   }
 }

@@ -44,7 +44,11 @@ export async function generateGeminiText(prompt: string): Promise<string> {
 
 export async function generateGeminiJson<T>(prompt: string): Promise<T> {
   const raw = await generateGeminiText(prompt);
-  const cleaned = raw.replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
+  const cleaned = raw
+    .replace(/^```json\s*/i, '')
+    .replace(/```$/i, '')
+    .replace(/[\u0000-\u001F]+/g, ' ')
+    .trim();
   return JSON.parse(cleaned) as T;
 }
 
