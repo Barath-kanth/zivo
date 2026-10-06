@@ -71,8 +71,16 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
     Emitter<TaskState> emit,
   ) async {
     _feedChannel = _taskRepository.subscribeToOpenTasks(
-      onInsert: (data) => add(TaskRealtimeInserted(Task.fromJson(data))),
-      onUpdate: (data) => add(TaskRealtimeUpdated(Task.fromJson(data))),
+      onInsert: (data) {
+        try {
+          add(TaskRealtimeInserted(Task.fromJson(data)));
+        } catch (_) {}
+      },
+      onUpdate: (data) {
+        try {
+          add(TaskRealtimeUpdated(Task.fromJson(data)));
+        } catch (_) {}
+      },
       onDelete: (data) => add(TaskRealtimeRemoved(data['id'] as String)),
     );
   }
@@ -181,7 +189,10 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
     }
     try {
       final createdTask = await _taskRepository.createTask(event.task);
+      _localNearbyTasks.insert(0, createdTask);
       emit(TaskCreated(createdTask));
+      // Keep helper Jobs feed in sync when the same device switches modes.
+      emit(TaskNearbyLoaded(_openNearbyOnly([createdTask, ..._localNearbyTasks])));
     } catch (e) {
       emit(TaskFailure(e.toString()));
     }

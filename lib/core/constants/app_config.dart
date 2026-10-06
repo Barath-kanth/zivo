@@ -31,7 +31,7 @@ abstract class AppConfig {
 
   static const String _dispatchRadiusKm = String.fromEnvironment(
     'DISPATCH_RADIUS_KM',
-    defaultValue: '5.0',
+    defaultValue: '80.0',
   );
 
   static const String _platformFeePercent = String.fromEnvironment(

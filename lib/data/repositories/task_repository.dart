@@ -48,7 +48,7 @@ class TaskRepository {
     }
 
     final loc = task.location;
-    final data = await _api.postJson('/tasks', {
+    final payload = <String, dynamic>{
       'title': task.title,
       'description': task.description,
       'category': task.category.name,
@@ -57,10 +57,19 @@ class TaskRepository {
       'goods_budget': task.goodsBudget,
       'lat': loc.latitude,
       'lon': loc.longitude,
-      'location_address': task.locationAddress,
-      'location_label': task.locationLabel,
-      if (task.photoUrls.isNotEmpty) 'photo_urls': task.photoUrls,
-    });
+    };
+    final address = task.locationAddress ?? task.locationLabel;
+    if (address != null && address.trim().isNotEmpty) {
+      payload['location_address'] = address.trim();
+    }
+    if (task.locationLabel != null && task.locationLabel!.trim().isNotEmpty) {
+      payload['location_label'] = task.locationLabel!.trim();
+    }
+    if (task.photoUrls.isNotEmpty) {
+      payload['photo_urls'] = task.photoUrls;
+    }
+
+    final data = await _api.postJson('/tasks', payload);
 
     final created = Task.fromJson(Map<String, dynamic>.from(data['task'] as Map));
     return created.copyWith(
@@ -203,11 +212,7 @@ class TaskRepository {
       try {
         final tasks = await getNearbyOpenTasks();
         for (final t in tasks) {
-          onUpdate({
-            'id': t.id,
-            'status': t.status.dbValue,
-            'title': t.title,
-          });
+          onUpdate(t.toJson());
         }
       } catch (_) {}
     });

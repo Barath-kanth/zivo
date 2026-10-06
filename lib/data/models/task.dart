@@ -305,6 +305,32 @@ class Task extends Equatable {
     'location_label': locationLabel,
   };
 
+  /// Wire format for feed refresh / Task.fromJson.
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'client_id': clientId,
+    'helper_id': helperId,
+    'title': title,
+    'description': description,
+    'category': category.name,
+    'estimated_hours': estimatedHours,
+    'hourly_rate': hourlyRate,
+    'total_amount': totalAmount,
+    'lat': location.latitude,
+    'lon': location.longitude,
+    'location_address': locationAddress,
+    'location_label': locationLabel,
+    'status': status.dbValue,
+    'start_otp': startOtp,
+    'end_otp': endOtp,
+    'created_at': createdAt.toIso8601String(),
+    'distance_km': distanceKm,
+    'goods_budget': goodsBudget,
+    'goods_spent': goodsSpent,
+    'requires_purchase_proof': requiresPurchaseProof,
+    'photo_urls': photoUrls,
+  };
+
   Task copyWith({
     String? helperId,
     TaskStatus? status,

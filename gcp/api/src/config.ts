@@ -1,5 +1,5 @@
 export const PLATFORM_FEE_PERCENT = 10;
-export const DISPATCH_RADIUS_KM = 5;
+export const DISPATCH_RADIUS_KM = Number(process.env.DISPATCH_RADIUS_KM ?? '80');
 export const CURRENCY = 'LKR';
 export const MARKET = 'Sri Lanka';
 

@@ -439,6 +439,9 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       hourlyRate: _hourlyRate,
       totalAmount: _estimatedHours * _hourlyRate,
       location: _pickedLocation!,
+      locationAddress: _locationLabelCtrl.text.trim().isEmpty
+          ? null
+          : _locationLabelCtrl.text.trim(),
       locationLabel: _locationLabelCtrl.text.trim().isEmpty
           ? null
           : _locationLabelCtrl.text.trim(),

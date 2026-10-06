@@ -236,9 +236,9 @@ app.post('/tasks', async (req, res) => {
         goods_budget: z.number().nonnegative().default(0),
         lat: z.number(),
         lon: z.number(),
-        location_address: z.string().optional(),
-        location_label: z.string().optional(),
-        photo_urls: z.array(z.string().min(8)).max(5).optional(),
+        location_address: z.string().nullish(),
+        location_label: z.string().nullish(),
+        photo_urls: z.array(z.string().min(8)).max(5).nullish(),
       })
       .parse(req.body);
 
@@ -250,7 +250,13 @@ app.post('/tasks', async (req, res) => {
       return res.status(422).json({ error: 'Task blocked by safety policy', safety });
     }
 
-    const task = await createTask({ ...body, client_id: userId });
+    const task = await createTask({
+      ...body,
+      client_id: userId,
+      location_address: body.location_address ?? undefined,
+      location_label: body.location_label ?? undefined,
+      photo_urls: body.photo_urls ?? undefined,
+    });
     res.status(201).json({ task, safety });
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'Create failed' });
