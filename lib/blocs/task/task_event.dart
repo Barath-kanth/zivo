@@ -9,13 +9,18 @@ abstract class TaskEvent extends Equatable {
 }
 
 class TaskFetchClientTasks extends TaskEvent {
-  const TaskFetchClientTasks(this.clientId);
+  const TaskFetchClientTasks(this.clientId, {this.silent = false});
   final String clientId;
+  /// When true, skip TaskLoading so the home screen does not flash/reload.
+  final bool silent;
   @override
-  List<Object?> get props => [clientId];
+  List<Object?> get props => [clientId, silent];
 }
 
 class TaskFetchNearbyTasks extends TaskEvent {}
+
+/// Load matched/in-progress jobs for the signed-in helper (Active tab).
+class TaskFetchHelperActive extends TaskEvent {}
 
 class TaskCreate extends TaskEvent {
   const TaskCreate(this.task);

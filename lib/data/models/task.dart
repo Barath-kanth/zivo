@@ -161,6 +161,7 @@ class Task extends Equatable {
     this.disputeReason,
     this.storeName,
     this.photoUrls = const [],
+    this.photoPaths = const [],
   });
 
   final String id;
@@ -202,6 +203,8 @@ class Task extends Equatable {
 
   /// Reference photos attached at create time (all categories).
   final List<String> photoUrls;
+  /// GCS object paths (used to refresh signed URLs for helpers).
+  final List<String> photoPaths;
 
   bool get isPurchaseTask =>
       category == TaskCategory.groceryRun ||
@@ -287,6 +290,10 @@ class Task extends Equatable {
                               ?.map((e) => e.toString())
                               .toList() ??
                           const [],
+      photoPaths:           (json['photo_paths'] as List?)
+                              ?.map((e) => e.toString())
+                              .toList() ??
+                          const [],
     );
   }
 
@@ -329,6 +336,7 @@ class Task extends Equatable {
     'goods_spent': goodsSpent,
     'requires_purchase_proof': requiresPurchaseProof,
     'photo_urls': photoUrls,
+    'photo_paths': photoPaths,
   };
 
   Task copyWith({
@@ -348,6 +356,7 @@ class Task extends Equatable {
     DateTime? clientConfirmedDeliveryAt,
     String? disputeReason,
     List<String>? photoUrls,
+    List<String>? photoPaths,
   }) {
     return Task(
       id: id,
@@ -385,6 +394,7 @@ class Task extends Equatable {
       disputeReason: disputeReason ?? this.disputeReason,
       storeName: storeName,
       photoUrls: photoUrls ?? this.photoUrls,
+      photoPaths: photoPaths ?? this.photoPaths,
     );
   }
 

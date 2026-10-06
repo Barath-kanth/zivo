@@ -102,8 +102,8 @@ class GcpApiClient {
     return _decode(res);
   }
 
-  /// Upload a task reference photo (any category). Returns signed URL.
-  Future<String> uploadTaskPhoto({
+  /// Upload a task reference photo (any category). Returns `{url, path}`.
+  Future<Map<String, String>> uploadTaskPhoto({
     required List<int> bytes,
     String filename = 'photo.jpg',
   }) async {
@@ -115,10 +115,14 @@ class GcpApiClient {
       filename: filename,
     );
     final url = data['url'] as String?;
+    final path = data['path'] as String?;
     if (url == null || url.isEmpty) {
       throw AppAuthException('Upload did not return a URL');
     }
-    return url;
+    return {
+      'url': url,
+      if (path != null && path.isNotEmpty) 'path': path,
+    };
   }
 
   Map<String, dynamic> _decode(http.Response res) {

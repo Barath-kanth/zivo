@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -16,6 +18,7 @@ import 'package:hyperlocal/data/repositories/task_repository.dart';
 import 'package:hyperlocal/data/repositories/trust_repository.dart';
 import 'package:hyperlocal/ui/_shared/task_status_badge.dart';
 import 'package:hyperlocal/ui/_shared/empty_state_widget.dart';
+import 'package:hyperlocal/ui/_shared/task_photo_gallery.dart';
 
 class JobFeedScreen extends StatefulWidget {
   const JobFeedScreen({super.key});
@@ -338,6 +341,14 @@ class JobCard extends StatelessWidget {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
+            if (task.photoUrls.isNotEmpty) ...[
+              const Gap(10),
+              TaskPhotoGallery(
+                photoUrls: task.photoUrls,
+                height: 72,
+                label: '${task.photoUrls.length} photo${task.photoUrls.length == 1 ? '' : 's'}',
+              ),
+            ],
             const Gap(12),
             Row(
               children: [
@@ -413,6 +424,10 @@ class JobCard extends StatelessWidget {
               ),
               const Gap(12),
               Text(task.description, style: AppTextStyles.bodyLarge),
+              if (task.photoUrls.isNotEmpty) ...[
+                const Gap(16),
+                TaskPhotoGallery(photoUrls: task.photoUrls, height: 120),
+              ],
               const Gap(20),
               // Earnings breakdown
               Container(
@@ -571,25 +586,119 @@ class JobCard extends StatelessWidget {
     try {
       final ranking =
           await rootCtx.read<TaskRepository>().matchHelpers(task.id);
-      final candidates = ranking['candidates'] as List? ?? [];
-      if (rootCtx.mounted && candidates.isNotEmpty) {
-        final top = candidates.first as Map;
-        ScaffoldMessenger.of(rootCtx).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Pillar C match: ${top['name']} · score ${top['score']} '
-              '(${ranking['radiusKm']} km radius)',
-            ),
-          ),
-        );
+      if (rootCtx.mounted) {
+        await _showPillarCMatch(rootCtx, ranking);
       }
     } catch (_) {}
     if (!rootCtx.mounted) return;
-    rootCtx.read<TaskBloc>().add(TaskAccept(
-          taskId: task.id,
-          helperId: helperId,
-        ));
-    rootCtx.push('/job/${task.id}/active');
+    // Accept first, then open Active — avoids empty Active before match lands.
+    final bloc = rootCtx.read<TaskBloc>();
+    late final StreamSubscription sub;
+    sub = bloc.stream.listen((s) {
+      if (s is TaskAccepted && s.task.id == task.id) {
+        sub.cancel();
+        if (rootCtx.mounted) {
+          rootCtx.go('/job/${s.task.id}/active');
+        }
+      } else if (s is TaskFailure) {
+        sub.cancel();
+        if (rootCtx.mounted) {
+          ScaffoldMessenger.of(rootCtx).showSnackBar(
+            SnackBar(
+              content: Text(s.message),
+              backgroundColor: AppColors.errorColor,
+            ),
+          );
+        }
+      }
+    });
+    bloc.add(TaskAccept(taskId: task.id, helperId: helperId));
+  }
+
+  Future<void> _showPillarCMatch(
+    BuildContext ctx,
+    Map<String, dynamic> ranking,
+  ) async {
+    final candidates = ranking['candidates'] as List? ?? [];
+    final top = candidates.isNotEmpty ? candidates.first as Map : null;
+    final mode = ranking['mode']?.toString() ?? '—';
+    final selectedName =
+        ranking['selected_helper_name']?.toString() ?? top?['name']?.toString();
+    final nearestDep = ranking['nearest_deprioritized'] == true;
+    final explanation = ranking['explanation']?.toString() ?? '';
+    final tools = (ranking['tool_trace'] as List?) ?? const [];
+
+    await showDialog<void>(
+      context: ctx,
+      builder: (dCtx) => AlertDialog(
+        title: Text('Pillar C · Match · $mode'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                nearestDep
+                    ? 'Nearest helper deprioritized (disputes / trust). Selected: ${selectedName ?? '—'}'
+                    : 'Selected: ${selectedName ?? '—'}',
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: nearestDep
+                      ? AppColors.warningColor
+                      : AppColors.successColor,
+                ),
+              ),
+              if (explanation.isNotEmpty) ...[
+                const Gap(10),
+                Text(explanation, style: AppTextStyles.bodySmall),
+              ],
+              if (candidates.isNotEmpty) ...[
+                const Gap(10),
+                Text('Ranked candidates', style: AppTextStyles.headingSmall),
+                const Gap(4),
+                ...candidates.take(4).map((c) {
+                  final m = c as Map;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      '${m['name']} · ${m['distanceKm']} km · score ${m['score']}'
+                      '${m['trust_tier'] != null ? ' · ${m['trust_tier']}' : ''}'
+                      '${m['dispute_count'] != null ? ' · disputes ${m['dispute_count']}' : ''}',
+                      style: AppTextStyles.bodySmall.copyWith(fontSize: 11),
+                    ),
+                  );
+                }),
+              ],
+              if (tools.isNotEmpty) ...[
+                const Gap(8),
+                Text(
+                  'Tools: ${tools.map((t) => (t as Map)['name']).join(' → ')}',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.textMuted,
+                    fontSize: 10,
+                  ),
+                ),
+              ],
+              if (ranking['research_note'] != null) ...[
+                const Gap(8),
+                Text(
+                  ranking['research_note'].toString(),
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.textMuted,
+                    fontSize: 10,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx),
+            child: const Text('Accept & continue'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _sendQuote(

@@ -31,10 +31,14 @@ class TaskRepository {
     required String taskId,
     required String shoppingList,
     List<int>? imageBytes,
+    double? budgetLkr,
   }) {
     return _api.postMultipart(
       '/tasks/$taskId/receipt',
-      fields: {'shoppingList': shoppingList},
+      fields: {
+        'shoppingList': shoppingList,
+        if (budgetLkr != null) 'budget_lkr': budgetLkr.toStringAsFixed(0),
+      },
       fileBytes: imageBytes,
     );
   }
@@ -68,6 +72,9 @@ class TaskRepository {
     if (task.photoUrls.isNotEmpty) {
       payload['photo_urls'] = task.photoUrls;
     }
+    if (task.photoPaths.isNotEmpty) {
+      payload['photo_paths'] = task.photoPaths;
+    }
 
     final data = await _api.postJson('/tasks', payload);
 
@@ -76,10 +83,11 @@ class TaskRepository {
       goodsBudget: task.goodsBudget,
       requiresPurchaseProof: task.goodsBudget > 0 || task.isPurchaseTask,
       photoUrls: task.photoUrls.isNotEmpty ? task.photoUrls : created.photoUrls,
+      photoPaths: task.photoPaths.isNotEmpty ? task.photoPaths : created.photoPaths,
     );
   }
 
-  Future<String> uploadTaskPhoto({
+  Future<Map<String, String>> uploadTaskPhoto({
     required List<int> bytes,
     String filename = 'photo.jpg',
   }) {
@@ -125,17 +133,23 @@ class TaskRepository {
     return Task.fromJson(Map<String, dynamic>.from(data['task'] as Map));
   }
 
+  /// Helper's matched / in-progress jobs for the Active tab.
+  Future<List<Task>> getHelperActiveTasks() async {
+    final data = await _api.getJson('/tasks/helper/active');
+    final list = data['tasks'] as List? ?? [];
+    return list
+        .map((e) => Task.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList();
+  }
+
   Future<Task> verifyStartOtp({
     required String taskId,
     required String enteredOtp,
   }) async {
-    final task = await getTaskById(taskId);
-    if (task == null) throw Exception('Task not found');
-    if (task.startOtp != null && task.startOtp != enteredOtp) {
-      throw Exception('Invalid Start OTP. Please check with the client.');
-    }
-    // Local status bump for Cup demo (API can expand later)
-    return task.copyWith(status: TaskStatus.inProgress);
+    final data = await _api.postJson('/tasks/$taskId/start', {
+      'start_otp': enteredOtp,
+    });
+    return Task.fromJson(Map<String, dynamic>.from(data['task'] as Map));
   }
 
   Future<Task> verifyEndOtp({
@@ -168,21 +182,21 @@ class TaskRepository {
 
   Future<Map<String, dynamic>> submitPurchaseProof({
     required String taskId,
-    required String receiptImageUrl,
-    required List<String> goodsImageUrls,
-    required double receiptTotal,
+    required String shoppingList,
+    List<int>? receiptImageBytes,
+    double? budgetLkr,
     String? storeName,
-    String? notes,
+    double? receiptTotalHint,
   }) async {
     final result = await reconcileReceipt(
       taskId: taskId,
-      shoppingList: notes ?? '',
+      shoppingList: shoppingList,
+      imageBytes: receiptImageBytes,
+      budgetLkr: budgetLkr,
     );
     return {
       ...result,
-      'receipt_total': receiptTotal,
-      'receipt_image_url': receiptImageUrl,
-      'goods_image_urls': goodsImageUrls,
+      if (receiptTotalHint != null) 'receipt_total_hint': receiptTotalHint,
       'store_name': storeName,
       'proof_submitted_at': DateTime.now().toUtc().toIso8601String(),
     };
@@ -208,9 +222,14 @@ class TaskRepository {
     required void Function(Map<String, dynamic>) onUpdate,
     required void Function(Map<String, dynamic>) onDelete,
   }) {
-    final timer = Timer.periodic(const Duration(seconds: 8), (_) async {
+    String? lastFingerprint;
+    // Slower poll — avoids Jobs feed flashing every few seconds.
+    final timer = Timer.periodic(const Duration(seconds: 20), (_) async {
       try {
         final tasks = await getNearbyOpenTasks();
+        final fp = tasks.map((t) => '${t.id}:${t.status.dbValue}').join('|');
+        if (fp == lastFingerprint) return;
+        lastFingerprint = fp;
         for (final t in tasks) {
           onUpdate(t.toJson());
         }
@@ -223,16 +242,12 @@ class TaskRepository {
     required String taskId,
     required void Function(Map<String, dynamic>) onUpdate,
   }) {
-    final timer = Timer.periodic(const Duration(seconds: 5), (_) async {
+    final timer = Timer.periodic(const Duration(seconds: 8), (_) async {
       try {
         final t = await getTaskById(taskId);
         if (t != null) {
-          onUpdate({
-            'id': t.id,
-            'status': t.status.dbValue,
-            'start_otp': t.startOtp,
-            'end_otp': t.endOtp,
-          });
+          // Full task JSON — partial maps broke Task.fromJson / Active screen.
+          onUpdate(t.toJson());
         }
       } catch (_) {}
     });

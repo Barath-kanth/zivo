@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -25,12 +27,37 @@ class ClientHomeScreen extends StatefulWidget {
 }
 
 class _ClientHomeScreenState extends State<ClientHomeScreen> {
+  Timer? _refreshTimer;
+
   @override
   void initState() {
     super.initState();
+    _refreshClientTasks(silent: false);
+    // Quiet poll only while a job needs Start/End OTP (no full-page flash).
+    _refreshTimer = Timer.periodic(const Duration(seconds: 12), (_) {
+      final bloc = context.read<TaskBloc>();
+      final tasks = bloc.peekClientTasks();
+      final needsOtp = tasks.any(
+        (t) =>
+            t.status == TaskStatus.matched ||
+            t.status == TaskStatus.inProgress,
+      );
+      if (needsOtp) _refreshClientTasks(silent: true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  void _refreshClientTasks({bool silent = false}) {
     final auth = context.read<AuthBloc>().state;
     if (auth is AuthAuthenticated) {
-      context.read<TaskBloc>().add(TaskFetchClientTasks(auth.profile.id));
+      context.read<TaskBloc>().add(
+            TaskFetchClientTasks(auth.profile.id, silent: silent),
+          );
     }
   }
 
@@ -479,8 +506,11 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
         final source = state is TaskClientLoaded
             ? state.tasks
             : bloc.peekClientTasks();
-        final tasks =
-            source.where((t) => !t.status.isTerminal).toList();
+        // Active + just-completed so client can see “finished”
+        final tasks = source
+            .where((t) =>
+                !t.status.isTerminal || t.status == TaskStatus.completed)
+            .toList();
 
         if (tasks.isEmpty) {
           return SliverToBoxAdapter(
@@ -670,44 +700,15 @@ class _ClientTaskCard extends StatelessWidget {
                           task.status == TaskStatus.inProgress) &&
                       (task.startOtp != null || task.endOtp != null)) ...[
                     const Gap(12),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: AppColors.accent.withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                            color: AppColors.accent.withOpacity(0.35)),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.lock_outline_rounded,
-                            size: 16,
-                            color: AppColors.accent,
-                          ),
-                          const Gap(8),
-                          Expanded(
-                            child: Text(
-                              task.status == TaskStatus.inProgress
-                                  ? 'End OTP for helper: ${task.endOtp ?? '------'}'
-                                  : 'Start OTP for helper: ${task.startOtp ?? '------'}',
-                              style: AppTextStyles.bodySmall.copyWith(
-                                color: AppColors.accent,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 0.4,
-                              ),
-                            ),
-                          ),
-                          Text(
-                            'Tap for full view',
-                            style: AppTextStyles.bodySmall.copyWith(
-                              color: AppColors.textMuted,
-                              fontSize: 10,
-                            ),
-                          ),
-                        ],
+                    _ClientOtpBanner(task: task),
+                  ],
+                  if (task.status == TaskStatus.completed) ...[
+                    const Gap(12),
+                    Text(
+                      'Job finished — escrow released.',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: AppColors.successColor,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
@@ -759,6 +760,78 @@ class _ClientTaskCard extends StatelessWidget {
         .animate(delay: Duration(milliseconds: 60 * index))
         .fadeIn(duration: 350.ms)
         .slideY(begin: 0.07);
+  }
+}
+
+class _ClientOtpBanner extends StatelessWidget {
+  const _ClientOtpBanner({required this.task});
+  final Task task;
+
+  @override
+  Widget build(BuildContext context) {
+    final inProgress = task.status == TaskStatus.inProgress;
+    final code = inProgress ? task.endOtp : task.startOtp;
+    final title = inProgress
+        ? 'End OTP for helper: ${code ?? '----'}'
+        : 'Start OTP for helper: ${code ?? '----'}';
+    final hint = inProgress
+        ? 'Job is underway. When you are happy with the work, read this End code to the helper — that finishes the job and releases escrow.'
+        : 'Give this Start code to the helper to begin. A different End OTP appears here after they start.';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: (inProgress ? AppColors.successColor : AppColors.accent)
+            .withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: (inProgress ? AppColors.successColor : AppColors.accent)
+              .withValues(alpha: 0.35),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.lock_outline_rounded,
+                size: 16,
+                color: inProgress ? AppColors.successColor : AppColors.accent,
+              ),
+              const Gap(8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color:
+                        inProgress ? AppColors.successColor : AppColors.accent,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.4,
+                  ),
+                ),
+              ),
+              Text(
+                inProgress ? 'Step 2/2' : 'Step 1/2',
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: AppColors.textMuted,
+                  fontSize: 10,
+                ),
+              ),
+            ],
+          ),
+          const Gap(6),
+          Text(
+            hint,
+            style: AppTextStyles.bodySmall.copyWith(
+              color: AppColors.textMuted,
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

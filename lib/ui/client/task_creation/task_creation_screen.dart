@@ -50,6 +50,8 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
   final _picker = ImagePicker();
   final List<Uint8List> _photoBytes = [];
   static const _maxPhotos = 5;
+  Map<String, dynamic>? _pillarA;
+  bool _pillarALoading = false;
 
   // Sri Lankan cities
   static const _cityPresets = [
@@ -176,7 +178,35 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       _hourlyRate = 700.0;
       _livePolicyWarning = null;
       _photoBytes.clear();
+      _pillarA = null;
     });
+  }
+
+  Future<void> _runPillarACheck() async {
+    if (_titleCtrl.text.trim().isEmpty && _descCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a title or details first')),
+      );
+      return;
+    }
+    setState(() => _pillarALoading = true);
+    try {
+      final safety = await context.read<TaskRepository>().safetyCheck(
+            title: _titleCtrl.text.trim().isEmpty
+                ? '(no title)'
+                : _titleCtrl.text.trim(),
+            description: _descCtrl.text.trim(),
+          );
+      if (!mounted) return;
+      setState(() => _pillarA = safety);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Pillar A check failed: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _pillarALoading = false);
+    }
   }
 
   Future<void> _addPhotos() async {
@@ -342,14 +372,23 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             title: _titleCtrl.text,
             description: _descCtrl.text,
           );
+      if (mounted) setState(() => _pillarA = safety);
       if (safety['allowed'] != true) {
-        final reasons = (safety['reasons'] as List?)?.join(' · ') ??
+        final reasoning = safety['reasoning']?.toString() ??
+            (safety['reasons'] as List?)?.join(' · ') ??
             'Blocked by vernacular safety (Pillar A)';
+        final kw = (safety['keyword_filter'] as Map?)?['note']?.toString();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(reasons, style: const TextStyle(color: Colors.white)),
+            content: Text(
+              [
+                if (kw != null) kw,
+                'Gemini: ${safety['action'] ?? 'block'} — $reasoning',
+              ].join('\n'),
+              style: const TextStyle(color: Colors.white),
+            ),
             backgroundColor: AppColors.errorColor,
-            duration: const Duration(seconds: 5),
+            duration: const Duration(seconds: 6),
           ),
         );
         return;
@@ -407,15 +446,18 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
 
     // Upload reference photos (any category) before create.
     final photoUrls = <String>[];
+    final photoPaths = <String>[];
     if (_photoBytes.isNotEmpty) {
       try {
         final repo = context.read<TaskRepository>();
         for (var i = 0; i < _photoBytes.length; i++) {
-          final url = await repo.uploadTaskPhoto(
+          final uploaded = await repo.uploadTaskPhoto(
             bytes: _photoBytes[i],
             filename: 'task_${DateTime.now().millisecondsSinceEpoch}_$i.jpg',
           );
-          photoUrls.add(url);
+          photoUrls.add(uploaded['url']!);
+          final path = uploaded['path'];
+          if (path != null && path.isNotEmpty) photoPaths.add(path);
         }
       } catch (e) {
         if (!mounted) return;
@@ -450,6 +492,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       goodsBudget: _needsPurchaseTrust ? _goodsBudget : 0,
       requiresPurchaseProof: _needsPurchaseTrust,
       photoUrls: photoUrls,
+      photoPaths: photoPaths,
     );
     if (!mounted) return;
     context.read<TaskBloc>().add(TaskCreate(task));
@@ -875,14 +918,10 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                   ],
                 ),
               ),
-            ] else ...[
-              const Gap(14),
-              Text(
-                'Live policy check: weapons, drugs, cash-mule, gambling, and exploitation requests are blocked under Sri Lankan law and Hyperlocal guidelines.',
-                style: AppTextStyles.bodySmall
-                    .copyWith(color: AppColors.textMuted, fontSize: 11),
-              ),
             ],
+
+            const Gap(16),
+            _buildPillarACard(color),
 
             const Gap(16),
             Container(
@@ -900,7 +939,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                   const Gap(8),
                   Expanded(
                     child: Text(
-                      'The more detail you give, the quicker you\'ll be matched.',
+                      'Demo tip: try an euphemistic ask like “discreet special package pickup, no questions” — keyword filter often ALLOWs; Pillar A should BLOCK with reasoning.',
                       style: AppTextStyles.bodySmall
                           .copyWith(color: color, fontSize: 11),
                     ),
@@ -911,6 +950,123 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildPillarACard(Color color) {
+    final a = _pillarA;
+    final keyword = a?['keyword_filter'] as Map?;
+    final allowed = a?['allowed'] == true;
+    final action = a?['action']?.toString() ?? (allowed ? 'allow' : 'block');
+    final mode = a?['mode']?.toString() ?? '—';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.cardElevated,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.shield_moon_outlined, color: color, size: 18),
+              const Gap(8),
+              Expanded(
+                child: Text(
+                  'Pillar A · Vernacular safety',
+                  style: AppTextStyles.headingSmall.copyWith(fontSize: 13),
+                ),
+              ),
+              TextButton(
+                onPressed: _pillarALoading ? null : _runPillarACheck,
+                child: _pillarALoading
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Run check'),
+              ),
+            ],
+          ),
+          Text(
+            'Gemini structured classifier over Sinhala–English (no translate-first).',
+            style: AppTextStyles.bodySmall
+                .copyWith(color: AppColors.textMuted, fontSize: 11),
+          ),
+          if (a != null) ...[
+            const Gap(12),
+            _pillarRow(
+              'Keyword filter',
+              keyword?['note']?.toString() ??
+                  (keyword?['allowed'] == true ? 'ALLOW' : 'BLOCK'),
+              keyword?['allowed'] == true
+                  ? AppColors.warningColor
+                  : AppColors.errorColor,
+            ),
+            const Gap(6),
+            _pillarRow(
+              'Gemini action',
+              '${action.toUpperCase()} · ${a['risk_category'] ?? '—'} · conf ${(a['confidence'] as num?)?.toStringAsFixed(2) ?? '—'} · $mode',
+              allowed
+                  ? AppColors.successColor
+                  : action == 'review'
+                      ? AppColors.warningColor
+                      : AppColors.errorColor,
+            ),
+            if (a['reasoning'] != null) ...[
+              const Gap(8),
+              Text(
+                a['reasoning'].toString(),
+                style: AppTextStyles.bodySmall.copyWith(fontSize: 12),
+              ),
+            ],
+            if (a['research_note'] != null) ...[
+              const Gap(8),
+              Text(
+                a['research_note'].toString(),
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: AppColors.textMuted,
+                  fontSize: 10,
+                ),
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _pillarRow(String label, String value, Color accent) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          margin: const EdgeInsets.only(top: 4),
+          decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+        ),
+        const Gap(8),
+        Expanded(
+          child: RichText(
+            text: TextSpan(
+              style: AppTextStyles.bodySmall.copyWith(fontSize: 11),
+              children: [
+                TextSpan(
+                  text: '$label: ',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                TextSpan(text: value),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 

@@ -129,19 +129,26 @@ class OtpBloc extends Bloc<OtpEvent, OtpState> {
         helperId.startsWith('helper-demo-');
   }
 
-  /// Try Supabase first, then fall back to the in-memory TaskBloc demo list.
+  /// Prefer Cloud Run task (fresh signed photo URLs) over stale in-memory copies.
   Future<Task?> _resolveTask(String taskId) async {
     if (taskId == 'none' || taskId.isEmpty) return null;
 
-    // 1. In-memory first for demo IDs (avoid stale/null remote)
     final local = _taskBloc.findTaskById(taskId);
     if (local != null && isDemoTask(local)) return local;
 
-    // 2. Try remote
     final remote = await _taskRepository.getTaskById(taskId);
-    if (remote != null) return remote;
+    if (remote != null) {
+      if (remote.photoUrls.isEmpty &&
+          local != null &&
+          local.photoUrls.isNotEmpty) {
+        return remote.copyWith(
+          photoUrls: local.photoUrls,
+          photoPaths: local.photoPaths,
+        );
+      }
+      return remote;
+    }
 
-    // 3. Helper's accepted/active job cache
     final active = _taskBloc.getActiveTaskForHelper();
     if (active != null && active.id == taskId) return active;
 
@@ -213,6 +220,7 @@ class OtpBloc extends Bloc<OtpEvent, OtpState> {
         taskId: event.taskId,
         enteredOtp: event.enteredOtp,
       );
+      _taskBloc.syncTaskStatus(updatedTask);
       emit(OtpStateInProgress(task: updatedTask));
     } on Exception catch (e) {
       emit(OtpStateMatched(
@@ -254,6 +262,7 @@ class OtpBloc extends Bloc<OtpEvent, OtpState> {
         taskId: event.taskId,
         enteredOtp: event.enteredOtp,
       );
+      _taskBloc.syncTaskStatus(updatedTask);
       emit(OtpStateCompleted(updatedTask));
     } on Exception catch (e) {
       emit(OtpStateInProgress(

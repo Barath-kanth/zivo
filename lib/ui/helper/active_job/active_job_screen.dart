@@ -3,6 +3,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
 import 'package:hyperlocal/core/constants/app_config.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
@@ -11,6 +12,7 @@ import 'package:hyperlocal/data/models/task_status.dart';
 import 'package:hyperlocal/data/repositories/task_repository.dart';
 import 'package:hyperlocal/ui/_shared/task_status_badge.dart';
 import 'package:hyperlocal/ui/_shared/empty_state_widget.dart';
+import 'package:hyperlocal/ui/_shared/task_photo_gallery.dart';
 import 'package:hyperlocal/blocs/otp/otp_bloc.dart';
 import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
 import 'package:hyperlocal/blocs/task/task_bloc.dart';
@@ -25,10 +27,13 @@ class ActiveJobScreen extends StatefulWidget {
 }
 
 class _ActiveJobScreenState extends State<ActiveJobScreen> {
+  /// Matches GCP task start/end OTP (4 digits — see store.ts).
+  static const int _otpLength = 4;
+
   final List<TextEditingController> _otpControllers =
-      List.generate(6, (_) => TextEditingController());
+      List.generate(_otpLength, (_) => TextEditingController());
   final List<FocusNode> _focusNodes =
-      List.generate(6, (_) => FocusNode());
+      List.generate(_otpLength, (_) => FocusNode());
 
   late OtpBloc _otpBloc;
 
@@ -56,9 +61,9 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
   }
 
   void _submitOtp(OtpState state) {
-    if (_enteredOtp.length != 6) {
+    if (_enteredOtp.length != _otpLength) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter all 6 digits')),
+        SnackBar(content: Text('Enter all $_otpLength digits')),
       );
       return;
     }
@@ -221,8 +226,9 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
               style: AppTextStyles.headingSmall),
           const Gap(6),
           Text(
-            'Upload receipt total + photo URLs (pilot). End OTP is blocked until this is done. '
-            'Never accept cash from the client — goods budget is ${AppConfig.money(task.goodsBudget)}.',
+            'Pillar B: photograph the till receipt + confirm the shopping list. '
+            'Gemini reconciles items / anomalies / total vs budget '
+            '(${AppConfig.money(task.goodsBudget)}). Never take cash from the client.',
             style: AppTextStyles.bodySmall,
           ),
           const Gap(12),
@@ -234,7 +240,7 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
                 backgroundColor: Colors.black,
                 foregroundColor: Colors.white,
               ),
-              child: const Text('Submit receipt & goods proof'),
+              child: const Text('Run receipt reconciliation'),
             ),
           ),
         ],
@@ -243,92 +249,250 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
   }
 
   Future<void> _showProofDialog(Task task) async {
-    final receiptUrl = TextEditingController(
-      text: 'https://example.com/receipt-${task.id}.jpg',
-    );
-    final goodsUrl = TextEditingController(
-      text: 'https://example.com/goods-${task.id}.jpg',
-    );
-    final totalCtrl = TextEditingController(
-      text: task.goodsBudget > 0 ? task.goodsBudget.toStringAsFixed(0) : '0',
+    final listCtrl = TextEditingController(
+      text: task.description.trim().isNotEmpty
+          ? task.description.trim()
+          : 'rice, eggs, milk, bread',
     );
     final storeCtrl = TextEditingController(text: 'Cargills / Keells');
-    final ok = await showDialog<bool>(
+    List<int>? receiptBytes;
+    String? receiptName;
+    var submitting = false;
+
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            return AlertDialog(
+              title: const Text('Pillar B · Receipt vs list'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Demo: photograph a messy/crumpled receipt. Keyword OCR often fails; '
+                      'Gemini returns matched / missing / anomalies / total vs budget.',
+                      style: AppTextStyles.bodySmall
+                          .copyWith(color: AppColors.textMuted, fontSize: 11),
+                    ),
+                    const Gap(10),
+                    TextField(
+                      controller: storeCtrl,
+                      decoration:
+                          const InputDecoration(labelText: 'Store name'),
+                    ),
+                    TextField(
+                      controller: listCtrl,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        labelText: 'Original item list',
+                        hintText: 'rice, eggs, milk…',
+                      ),
+                    ),
+                    const Gap(8),
+                    Text(
+                      'Budget: ${AppConfig.money(task.goodsBudget)}',
+                      style: AppTextStyles.bodySmall,
+                    ),
+                    const Gap(10),
+                    OutlinedButton.icon(
+                      onPressed: submitting
+                          ? null
+                          : () async {
+                              final picker = ImagePicker();
+                              final file = await picker.pickImage(
+                                source: ImageSource.camera,
+                                maxWidth: 1600,
+                                imageQuality: 85,
+                              );
+                              if (file == null) return;
+                              final bytes = await file.readAsBytes();
+                              setLocal(() {
+                                receiptBytes = bytes;
+                                receiptName = file.name;
+                              });
+                            },
+                      icon: const Icon(Icons.photo_camera_outlined, size: 18),
+                      label: Text(
+                        receiptBytes == null
+                            ? 'Photograph receipt'
+                            : 'Receipt ready (${receiptName ?? 'image'})',
+                      ),
+                    ),
+                    if (receiptBytes == null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(
+                          'Gallery fallback available after canceling camera.',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textMuted,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ),
+                    TextButton(
+                      onPressed: submitting
+                          ? null
+                          : () async {
+                              final picker = ImagePicker();
+                              final file = await picker.pickImage(
+                                source: ImageSource.gallery,
+                                maxWidth: 1600,
+                                imageQuality: 85,
+                              );
+                              if (file == null) return;
+                              final bytes = await file.readAsBytes();
+                              setLocal(() {
+                                receiptBytes = bytes;
+                                receiptName = file.name;
+                              });
+                            },
+                      child: const Text('Pick from gallery instead'),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed:
+                      submitting ? null : () => Navigator.pop(ctx),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: submitting
+                      ? null
+                      : () async {
+                          if (listCtrl.text.trim().isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Enter the shopping list'),
+                              ),
+                            );
+                            return;
+                          }
+                          setLocal(() => submitting = true);
+                          try {
+                            final data = await context
+                                .read<TaskRepository>()
+                                .submitPurchaseProof(
+                                  taskId: task.id,
+                                  shoppingList: listCtrl.text.trim(),
+                                  receiptImageBytes: receiptBytes,
+                                  budgetLkr: task.goodsBudget,
+                                  storeName: storeCtrl.text.trim(),
+                                );
+                            if (ctx.mounted) Navigator.pop(ctx, data);
+                          } catch (e) {
+                            setLocal(() => submitting = false);
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('$e'),
+                                backgroundColor: AppColors.errorColor,
+                              ),
+                            );
+                          }
+                        },
+                  child: submitting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Reconcile'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    listCtrl.dispose();
+    storeCtrl.dispose();
+    if (result == null || !mounted) return;
+
+    await _showPillarBVerdict(result);
+    if (!mounted) return;
+    context.read<OtpBloc>().add(OtpSubscribeToTask(task.id));
+  }
+
+  Future<void> _showPillarBVerdict(Map<String, dynamic> result) async {
+    final verdict = result['verdict']?.toString() ?? 'review';
+    final mode = result['mode']?.toString() ?? '—';
+    final matched = (result['items_matched'] as List?)?.cast<dynamic>() ??
+        (result['itemsFound'] as List?)?.cast<dynamic>() ??
+        const [];
+    final missing = (result['items_missing'] as List?)?.cast<dynamic>() ??
+        (result['missingVsList'] as List?)?.cast<dynamic>() ??
+        const [];
+    final anomalies =
+        (result['price_anomalies'] as List?)?.cast<dynamic>() ?? const [];
+    final tvb = result['total_vs_budget'] as Map?;
+    final accent = verdict == 'pass'
+        ? AppColors.successColor
+        : verdict == 'fail'
+            ? AppColors.errorColor
+            : AppColors.warningColor;
+
+    await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Submit purchase proof'),
+        title: Text('Pillar B · ${verdict.toUpperCase()} · $mode'),
         content: SingleChildScrollView(
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(
-                controller: storeCtrl,
-                decoration: const InputDecoration(labelText: 'Store name'),
+              Text(
+                result['explanation']?.toString() ?? 'Reconciliation done.',
+                style: AppTextStyles.bodySmall,
               ),
-              TextField(
-                controller: totalCtrl,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: 'Receipt total (${AppConfig.currencyCode})',
+              const Gap(10),
+              Text(
+                  'Matched: ${matched.isEmpty ? '—' : matched.join(', ')}',
+                  style: AppTextStyles.bodySmall
+                      .copyWith(color: AppColors.successColor)),
+              Text(
+                  'Missing: ${missing.isEmpty ? '—' : missing.join(', ')}',
+                  style: AppTextStyles.bodySmall
+                      .copyWith(color: AppColors.errorColor)),
+              if (anomalies.isNotEmpty)
+                Text('Anomalies: ${anomalies.join('; ')}',
+                    style: AppTextStyles.bodySmall
+                        .copyWith(color: AppColors.warningColor)),
+              if (tvb != null) ...[
+                const Gap(8),
+                Text(
+                  'Total ${tvb['receipt_total_lkr']} vs budget ${tvb['budget_lkr']} '
+                  '(Δ ${tvb['delta_lkr']}) · within=${tvb['within_budget']}',
+                  style: AppTextStyles.bodySmall.copyWith(color: accent),
                 ),
-              ),
-              TextField(
-                controller: receiptUrl,
-                decoration: const InputDecoration(
-                  labelText: 'Receipt image URL',
+              ],
+              if (result['research_note'] != null) ...[
+                const Gap(10),
+                Text(
+                  result['research_note'].toString(),
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.textMuted,
+                    fontSize: 10,
+                  ),
                 ),
-              ),
-              TextField(
-                controller: goodsUrl,
-                decoration: const InputDecoration(
-                  labelText: 'Goods photo URL',
-                ),
-              ),
+              ],
             ],
           ),
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Submit')),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Continue to End OTP'),
+          ),
         ],
       ),
     );
-    if (ok != true || !mounted) return;
-    try {
-      await context.read<TaskRepository>().submitPurchaseProof(
-            taskId: task.id,
-            receiptImageUrl: receiptUrl.text.trim(),
-            goodsImageUrls: [goodsUrl.text.trim()],
-            receiptTotal: double.tryParse(totalCtrl.text) ?? 0,
-            storeName: storeCtrl.text.trim(),
-            notes: 'rice, eggs, milk',
-          );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Pillar B: receipt reconciled on GCP (Gemini multimodal when enabled)',
-          ),
-          backgroundColor: AppColors.successColor,
-        ),
-      );
-      context.read<OtpBloc>().add(OtpSubscribeToTask(task.id));
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Proof submitted — ask client for End OTP')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('$e'),
-          backgroundColor: AppColors.errorColor,
-        ),
-      );
-    }
   }
 
   Widget _buildStatusBar(Task task, bool isInProgress) {
@@ -391,6 +555,10 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
           ),
           const Gap(10),
           Text(task.description, style: AppTextStyles.bodyMedium, maxLines: 3, overflow: TextOverflow.ellipsis),
+          if (task.photoUrls.isNotEmpty) ...[
+            const Gap(12),
+            TaskPhotoGallery(photoUrls: task.photoUrls, height: 110),
+          ],
           const Divider(height: 20),
           Row(
             children: [
@@ -451,13 +619,13 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
           Text(instruction, style: AppTextStyles.bodyMedium),
           const Gap(24),
 
-          // OTP digit boxes
+          // OTP digit boxes (4 — same as client Start/End OTP)
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: List.generate(6, (i) => _OtpBox(
+            children: List.generate(_otpLength, (i) => _OtpBox(
               controller: _otpControllers[i],
               focusNode: _focusNodes[i],
-              nextFocus: i < 5 ? _focusNodes[i + 1] : null,
+              nextFocus: i < _otpLength - 1 ? _focusNodes[i + 1] : null,
               prevFocus: i > 0 ? _focusNodes[i - 1] : null,
               accentColor: accentColor,
             )),

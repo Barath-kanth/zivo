@@ -17,7 +17,17 @@ export function uploadsConfigured(): boolean {
   return Boolean(bucketName && gcpProjectId && gcpProjectId !== 'your-gcp-project-id');
 }
 
-/** Upload image bytes to GCS; return a time-limited signed read URL (free-tier safe). */
+async function signedReadUrl(path: string): Promise<string> {
+  const bucket = getStorage().bucket(bucketName);
+  const [url] = await bucket.file(path).getSignedUrl({
+    version: 'v4',
+    action: 'read',
+    expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
+  });
+  return url;
+}
+
+/** Upload image bytes to GCS; return signed read URL + object path. */
 export async function uploadTaskPhoto(input: {
   bytes: Buffer;
   contentType?: string;
@@ -41,10 +51,20 @@ export async function uploadTaskPhoto(input: {
     metadata: { cacheControl: 'public, max-age=86400' },
   });
 
-  const [url] = await file.getSignedUrl({
-    version: 'v4',
-    action: 'read',
-    expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
-  });
+  const url = await signedReadUrl(path);
   return { url, path };
+}
+
+/** Re-sign stored GCS paths so helpers always get fresh view URLs. */
+export async function refreshPhotoUrls(paths: string[] | undefined): Promise<string[]> {
+  if (!paths?.length || !uploadsConfigured()) return [];
+  const urls: string[] = [];
+  for (const path of paths) {
+    try {
+      urls.push(await signedReadUrl(path));
+    } catch {
+      // skip broken path
+    }
+  }
+  return urls;
 }

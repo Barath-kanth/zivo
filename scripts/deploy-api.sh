@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy gcp/api to Cloud Run (min instances = 0). Keep USE_MOCK_AI=true.
+# Deploy gcp/api to Cloud Run (min instances = 0). USE_MOCK_AI=false enables Vertex Gemini.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,7 +24,7 @@ gcloud run deploy "$SERVICE" \
   --cpu=1 \
   --min-instances=0 \
   --max-instances=3 \
-  --set-env-vars="USE_MOCK_AI=true,USE_MEMORY_STORE=false,GCP_PROJECT_ID=${PROJECT_ID},GCP_LOCATION=${REGION},GCS_BUCKET=${BUCKET},NODE_ENV=production,EXPOSE_OTP=true,DISPATCH_RADIUS_KM=80" \
+  --set-env-vars="USE_MOCK_AI=false,USE_MEMORY_STORE=false,GCP_PROJECT_ID=${PROJECT_ID},GCP_LOCATION=${REGION},VERTEX_LOCATION=${VERTEX_LOCATION:-us-central1},GCS_BUCKET=${BUCKET},NODE_ENV=production,EXPOSE_OTP=true,DISPATCH_RADIUS_KM=80,GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash-lite}" \
   --project="$PROJECT_ID"
 
 URL="$(gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT_ID" --format='value(status.url)')"

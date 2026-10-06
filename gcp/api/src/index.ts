@@ -9,6 +9,7 @@ import { matchHelpers } from './pillars/match.js';
 import {
   acceptTask,
   completeTask,
+  startTask,
   createSession,
   createTask,
   dbMode,
@@ -16,6 +17,7 @@ import {
   getUser,
   issuePhoneOtp,
   listClientTasks,
+  listHelperActiveTasks,
   listLedger,
   listOpenTasks,
   listUsers,
@@ -59,6 +61,8 @@ app.get('/health', (_req, res) => {
     db: dbMode(),
     mockAi: (process.env.USE_MOCK_AI ?? 'true').toLowerCase() !== 'false',
     uploads: uploadsConfigured(),
+    geminiModel: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash-lite',
+    vertexLocation: process.env.VERTEX_LOCATION ?? 'us-central1',
   });
 });
 
@@ -239,6 +243,7 @@ app.post('/tasks', async (req, res) => {
         location_address: z.string().nullish(),
         location_label: z.string().nullish(),
         photo_urls: z.array(z.string().min(8)).max(5).nullish(),
+        photo_paths: z.array(z.string().min(3)).max(5).nullish(),
       })
       .parse(req.body);
 
@@ -256,6 +261,7 @@ app.post('/tasks', async (req, res) => {
       location_address: body.location_address ?? undefined,
       location_label: body.location_label ?? undefined,
       photo_urls: body.photo_urls ?? undefined,
+      photo_paths: body.photo_paths ?? undefined,
     });
     res.status(201).json({ task, safety });
   } catch (e) {
@@ -267,6 +273,15 @@ app.get('/tasks/mine', async (req, res) => {
   try {
     const id = await requireUser(req);
     res.json({ tasks: await listClientTasks(id) });
+  } catch (e) {
+    res.status(401).json({ error: e instanceof Error ? e.message : 'Unauthorized' });
+  }
+});
+
+app.get('/tasks/helper/active', async (req, res) => {
+  try {
+    const id = await requireUser(req);
+    res.json({ tasks: await listHelperActiveTasks(id) });
   } catch (e) {
     res.status(401).json({ error: e instanceof Error ? e.message : 'Unauthorized' });
   }
@@ -300,10 +315,27 @@ app.post('/tasks/:id/match', async (req, res) => {
   res.json(await matchHelpers(task));
 });
 
+app.post('/tasks/:id/start', async (req, res) => {
+  try {
+    await requireUser(req);
+    const body = z.object({ start_otp: z.string().min(4).max(8) }).parse(req.body);
+    const task = await startTask(String(req.params.id), body.start_otp);
+    res.json({ task });
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'Start failed' });
+  }
+});
+
 app.post('/tasks/:id/receipt', upload.single('receipt'), async (req, res) => {
   const task = await getTask(String(req.params.id));
   if (!task) return res.status(404).json({ error: 'Not found' });
-  const shoppingList = String(req.body.shoppingList ?? '');
+  const shoppingList = String(
+    req.body.shoppingList ?? req.body.shopping_list ?? task.description ?? '',
+  );
+  const budgetOverride = Number(req.body.budget_lkr ?? req.body.budgetLkr);
+  const goodsBudgetLkr = Number.isFinite(budgetOverride) && budgetOverride > 0
+    ? budgetOverride
+    : task.goods_budget;
   res.json(
     await reconcileReceipt({
       task: {
@@ -312,7 +344,7 @@ app.post('/tasks/:id/receipt', upload.single('receipt'), async (req, res) => {
         description: task.description,
         category: task.category === 'groceryRun' ? 'grocery' : 'labor',
         laborFeeLkr: task.total_amount,
-        goodsBudgetLkr: task.goods_budget,
+        goodsBudgetLkr,
         lat: task.lat,
         lng: task.lon,
         requiredSkill: 'none',
@@ -320,7 +352,7 @@ app.post('/tasks/:id/receipt', upload.single('receipt'), async (req, res) => {
         status: 'open',
         escrow: {
           laborHoldLkr: task.total_amount,
-          goodsHoldLkr: task.goods_budget,
+          goodsHoldLkr: goodsBudgetLkr,
           status: 'held',
         },
         confirmCode: task.confirm_code ?? '0000',

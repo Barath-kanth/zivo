@@ -5,6 +5,7 @@ import {
   PLATFORM_FEE_PERCENT,
   gcpProjectId,
 } from './config.js';
+import { refreshPhotoUrls } from './uploads.js';
 
 export type Skill = 'none' | 'driving' | 'care' | 'tutoring';
 
@@ -57,6 +58,7 @@ export type TaskRow = {
   confirm_code?: string;
   created_at: string;
   photo_urls?: string[];
+  photo_paths?: string[];
   helper?: { full_name: string; avatar_url?: string; rating_as_helper: number };
 };
 
@@ -152,15 +154,35 @@ async function saveTask(t: TaskRow) {
 }
 
 async function loadTask(id: string): Promise<TaskRow | undefined> {
-  if (useMemory) return memTasks.get(id);
-  const snap = await firestore().collection('tasks').doc(id).get();
-  return snap.exists ? (snap.data() as TaskRow) : undefined;
+  let task: TaskRow | undefined;
+  if (useMemory) {
+    task = memTasks.get(id);
+  } else {
+    const snap = await firestore().collection('tasks').doc(id).get();
+    task = snap.exists ? (snap.data() as TaskRow) : undefined;
+  }
+  if (!task) return undefined;
+  if (task.photo_paths?.length) {
+    task = { ...task, photo_urls: await refreshPhotoUrls(task.photo_paths) };
+  }
+  return task;
 }
 
 async function allTasks(): Promise<TaskRow[]> {
-  if (useMemory) return [...memTasks.values()];
-  const snap = await firestore().collection('tasks').get();
-  return snap.docs.map((d) => d.data() as TaskRow);
+  let rows: TaskRow[];
+  if (useMemory) {
+    rows = [...memTasks.values()];
+  } else {
+    const snap = await firestore().collection('tasks').get();
+    rows = snap.docs.map((d) => d.data() as TaskRow);
+  }
+  return Promise.all(
+    rows.map(async (t) =>
+      t.photo_paths?.length
+        ? { ...t, photo_urls: await refreshPhotoUrls(t.photo_paths) }
+        : t,
+    ),
+  );
 }
 
 export async function seedDemo() {
@@ -386,6 +408,7 @@ export async function createTask(input: {
   location_address?: string;
   location_label?: string;
   photo_urls?: string[];
+  photo_paths?: string[];
 }): Promise<TaskRow> {
   const client = await loadUser(input.client_id);
   if (!client) throw new Error('Client not found');
@@ -427,6 +450,7 @@ export async function createTask(input: {
     confirm_code: confirm,
     created_at: new Date().toISOString(),
     photo_urls: input.photo_urls?.filter(Boolean).slice(0, 5) ?? [],
+    photo_paths: input.photo_paths?.filter(Boolean).slice(0, 5) ?? [],
   };
   await saveTask(row);
   await addLedger(client.id, id, 'escrow_hold', -hold, client.wallet_balance, 'Escrow hold');
@@ -440,6 +464,17 @@ export async function getTask(id: string) {
 export async function listClientTasks(clientId: string) {
   return (await allTasks())
     .filter((t) => t.client_id === clientId)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
+/** Matched / in-progress jobs for a helper (Active tab). */
+export async function listHelperActiveTasks(helperId: string) {
+  return (await allTasks())
+    .filter(
+      (t) =>
+        t.helper_id === helperId &&
+        (t.status === 'matched' || t.status === 'in_progress'),
+    )
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
@@ -463,7 +498,11 @@ export async function acceptTask(taskId: string, helperId: string) {
   if (!task) throw new Error('Task not found');
   if (!helper) throw new Error('Helper not found');
   if (helper.kyc_status !== 'verified') throw new Error('Helper must be KYC verified');
-  if (!helper.is_helper_active) throw new Error('Activate helper mode first');
+  // Auto-activate helper mode if they are already verified (UI toggle may lag).
+  if (!helper.is_helper_active) {
+    helper.is_helper_active = true;
+    await saveUser(helper);
+  }
   if (task.status !== 'open') throw new Error('Task not open');
   task.status = 'matched';
   task.helper_id = helperId;
@@ -476,14 +515,36 @@ export async function acceptTask(taskId: string, helperId: string) {
   return task;
 }
 
+/** Helper enters Start OTP → job becomes in_progress; client then reveals End OTP. */
+export async function startTask(taskId: string, startOtp: string) {
+  const task = await loadTask(taskId);
+  if (!task) throw new Error('Task not found');
+  if (task.status !== 'matched') {
+    throw new Error(
+      task.status === 'in_progress'
+        ? 'Job already started'
+        : `Cannot start from status ${task.status}`,
+    );
+  }
+  if (!task.start_otp || startOtp !== task.start_otp) {
+    throw new Error('Invalid Start OTP');
+  }
+  task.status = 'in_progress';
+  await saveTask(task);
+  return task;
+}
+
 export async function completeTask(
   taskId: string,
   input: { confirm_code: string; receipt_total_lkr: number },
 ) {
   const task = await loadTask(taskId);
   if (!task) throw new Error('Task not found');
+  if (task.status !== 'in_progress' && task.status !== 'matched') {
+    throw new Error(`Cannot complete from status ${task.status}`);
+  }
   if (input.confirm_code !== task.confirm_code && input.confirm_code !== task.end_otp) {
-    throw new Error('Invalid confirm / End OTP');
+    throw new Error('Invalid End OTP — ask the client for the End code (not Start)');
   }
   const client = await loadUser(task.client_id);
   if (!client) throw new Error('Client missing');
@@ -592,16 +653,23 @@ export async function listLedger(userId: string) {
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
+/** Deterministic demo offsets so nearest ≠ best under dispute constraints. */
+const HELPER_GEO_OFFSET: Record<string, { dLat: number; dLng: number }> = {
+  h1: { dLat: 0.0018, dLng: 0.0004 }, // ~0.2 km — nearest
+  h3: { dLat: 0.012, dLng: -0.004 }, // ~1.4 km — farther, clean history
+};
+
 export async function helpersForMatch(task: TaskRow) {
   return (await allUsers())
     .filter((u) => u.is_helper_active && u.kyc_status === 'verified')
-    .map((u) => ({
-      helper: u,
-      distanceKm: haversineKm(
+    .map((u) => {
+      const off = HELPER_GEO_OFFSET[u.id] ?? { dLat: 0.02, dLng: 0.01 };
+      const distanceKm = haversineKm(
         { lat: task.lat, lng: task.lon },
-        { lat: 6.9271, lng: 79.8612 },
-      ),
-    }))
+        { lat: task.lat + off.dLat, lng: task.lon + off.dLng },
+      );
+      return { helper: u, distanceKm };
+    })
     .filter((x) => x.distanceKm <= DISPATCH_RADIUS_KM);
 }
 

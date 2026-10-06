@@ -80,7 +80,10 @@ class _ShellScreenState extends State<ShellScreen> {
           _prevModeType = state.runtimeType;
 
           if (state is HelperMode) {
-            context.read<TaskBloc>().add(TaskSubscribeToFeed());
+            context.read<TaskBloc>()
+              ..add(TaskSubscribeToFeed())
+              ..add(TaskFetchHelperActive())
+              ..add(TaskFetchNearbyTasks());
             context.go(AppRoutes.shell);
           } else if (state is ClientMode) {
             context.read<TaskBloc>().add(TaskUnsubscribeFromFeed());
@@ -235,11 +238,16 @@ class _ShellScreenState extends State<ShellScreen> {
         context.go(AppRoutes.shell);
       } else if (index == 1) {
         final auth = context.read<AuthBloc>().state;
-        final helperId =
-            auth is AuthAuthenticated ? auth.profile.id : null;
-        final activeTask = context
+        if (auth is! AuthAuthenticated) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Sign in to view your active job.')),
+          );
+          return;
+        }
+        final activeTask = await context
             .read<TaskBloc>()
-            .getActiveTaskForHelper(helperId: helperId);
+            .resolveHelperActiveTask(helperId: auth.profile.id);
+        if (!mounted) return;
         if (activeTask == null) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(

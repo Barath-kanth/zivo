@@ -10,6 +10,7 @@ import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/router/app_router.dart';
 import 'package:hyperlocal/data/models/task.dart';
 import 'package:hyperlocal/ui/_shared/task_status_badge.dart';
+import 'package:hyperlocal/ui/_shared/task_photo_gallery.dart';
 import 'package:hyperlocal/blocs/mode/mode_cubit.dart';
 
 /// Helper Home — Feed of nearby human tasks to pick up.
@@ -65,8 +66,22 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
   @override
   Widget build(BuildContext context) {
     return BlocListener<TaskBloc, TaskState>(
-      listenWhen: (prev, next) => next is TaskAccepted,
+      listenWhen: (prev, next) =>
+          next is TaskAccepted || next is TaskFailure,
       listener: (context, state) {
+        if (state is TaskFailure) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                state.message.replaceFirst('Exception: ', ''),
+                style: AppTextStyles.bodyMedium.copyWith(color: Colors.white),
+              ),
+              backgroundColor: AppColors.errorColor,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          return;
+        }
         if (state is! TaskAccepted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -577,6 +592,14 @@ class _JobCard extends StatelessWidget {
                     style: AppTextStyles.bodyMedium,
                     maxLines: 3,
                     overflow: TextOverflow.ellipsis),
+                if (task.photoUrls.isNotEmpty) ...[
+                  const Gap(10),
+                  TaskPhotoGallery(
+                    photoUrls: task.photoUrls,
+                    height: 80,
+                    label: 'Client photos',
+                  ),
+                ],
                 const Gap(14),
                 Row(
                   children: [

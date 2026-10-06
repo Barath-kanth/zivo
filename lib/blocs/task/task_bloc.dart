@@ -15,6 +15,7 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
         super(TaskInitial()) {
     on<TaskFetchClientTasks>(_onFetchClientTasks);
     on<TaskFetchNearbyTasks>(_onFetchNearbyTasks);
+    on<TaskFetchHelperActive>(_onFetchHelperActive);
     on<TaskCreate>(_onCreateTask);
     on<TaskAccept>(_onAcceptTask);
     on<TaskCancel>(_onCancelTask);
@@ -42,12 +43,15 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
     TaskFetchClientTasks event,
     Emitter<TaskState> emit,
   ) async {
-    emit(TaskLoading());
+    if (!event.silent) emit(TaskLoading());
     try {
       final tasks = await _taskRepository.getClientTasks(event.clientId);
+      _localClientTasks
+        ..clear()
+        ..addAll(tasks);
       emit(TaskClientLoaded(tasks));
     } catch (e) {
-      emit(TaskFailure(e.toString()));
+      if (!event.silent) emit(TaskFailure(e.toString()));
     }
   }
 
@@ -57,13 +61,30 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
     TaskFetchNearbyTasks event,
     Emitter<TaskState> emit,
   ) async {
-    emit(TaskLoading());
+    // Only show full-screen loader on first load — not on feed polls.
+    final firstLoad = state is! TaskNearbyLoaded;
+    if (firstLoad) emit(TaskLoading());
     try {
       final tasks = await _taskRepository.getNearbyOpenTasks();
+      _localNearbyTasks
+        ..clear()
+        ..addAll(tasks);
       emit(TaskNearbyLoaded(tasks));
     } catch (e) {
-      emit(TaskNearbyLoaded(const []));
+      if (firstLoad) emit(TaskNearbyLoaded(const []));
     }
+  }
+
+  Future<void> _onFetchHelperActive(
+    TaskFetchHelperActive event,
+    Emitter<TaskState> emit,
+  ) async {
+    try {
+      final tasks = await _taskRepository.getHelperActiveTasks();
+      if (tasks.isNotEmpty) {
+        _helperActiveTask = tasks.first;
+      }
+    } catch (_) {}
   }
 
   Future<void> _onSubscribeToFeed(
@@ -123,8 +144,13 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
     } else if (s is TaskClientLoaded) {
       final updated = s.tasks
           .map((t) => t.id == event.task.id ? event.task : t)
-          .where((t) => !t.status.isTerminal)
+          .where((t) =>
+              !t.status.isTerminal || t.status == TaskStatus.completed)
           .toList();
+      if (!updated.any((t) => t.id == event.task.id) &&
+          event.task.status == TaskStatus.completed) {
+        updated.insert(0, event.task);
+      }
       emit(TaskClientLoaded(updated));
     } else if (s is TaskAccepted) {
       // Restore open feed after accept so Jobs tab is not blank
@@ -176,8 +202,8 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
         locationAddress: event.task.locationAddress,
         locationLabel: event.task.locationLabel,
         status: TaskStatus.open,
-        startOtp: '123456',
-        endOtp: '654321',
+        startOtp: '1234',
+        endOtp: '5678',
         createdAt: DateTime.now(),
         goodsBudget: event.task.goodsBudget,
         requiresPurchaseProof: event.task.requiresPurchaseProof,
@@ -213,8 +239,8 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
             status: TaskStatus.matched,
             helperId: event.helperId,
             matchedAt: DateTime.now(),
-            startOtp: '123456',
-            endOtp: '654321',
+            startOtp: '1234',
+            endOtp: '5678',
           );
           task = _localNearbyTasks[i];
         }
@@ -225,8 +251,8 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
             status: TaskStatus.matched,
             helperId: event.helperId,
             matchedAt: DateTime.now(),
-            startOtp: '123456',
-            endOtp: '654321',
+            startOtp: '1234',
+            endOtp: '5678',
           );
           task ??= _localClientTasks[i];
         }
@@ -248,15 +274,24 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
       );
       _helperActiveTask = task;
       emit(TaskAccepted(task));
-      // Refresh open nearby feed
+      // Refresh open nearby feed (keep _helperActiveTask — Active tab uses it)
       try {
         final nearby = await _taskRepository.getNearbyOpenTasks();
+        _localNearbyTasks
+          ..clear()
+          ..addAll(nearby);
         emit(TaskNearbyLoaded(_openNearbyOnly(nearby)));
       } catch (_) {
         emit(TaskNearbyLoaded(const []));
       }
     } catch (e) {
-      emit(TaskFailure(e.toString()));
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      emit(TaskFailure(msg));
+      // Restore Jobs feed so Accept failure does not blank the list
+      try {
+        final nearby = await _taskRepository.getNearbyOpenTasks();
+        emit(TaskNearbyLoaded(_openNearbyOnly(nearby)));
+      } catch (_) {}
     }
   }
 
@@ -277,11 +312,10 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
   List<Task> peekClientTasks() => List<Task>.unmodifiable(_localClientTasks);
 
   /// Persist demo OTP / status changes back into memory lists and notify UI.
-  void syncDemoTaskStatus(Task updated) {
-    if (!updated.id.startsWith('task-demo-') &&
-        !updated.id.startsWith('demo-')) {
-      return;
-    }
+  void syncDemoTaskStatus(Task updated) => syncTaskStatus(updated);
+
+  /// Keep client Active Requests + helper Active in sync after Start/End OTP.
+  void syncTaskStatus(Task updated) {
     for (int i = 0; i < _localClientTasks.length; i++) {
       if (_localClientTasks[i].id == updated.id) {
         _localClientTasks[i] = updated;
@@ -302,7 +336,6 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
         _helperActiveTask = updated;
       }
     }
-    // Emit so client "Active Requests" / helper Active tab refresh
     add(TaskRealtimeUpdated(updated));
   }
 
@@ -338,7 +371,11 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
     final active = _helperActiveTask;
     if (active != null &&
         (active.status == TaskStatus.matched ||
-            active.status == TaskStatus.inProgress)) {
+            active.status == TaskStatus.inProgress) &&
+        (helperId == null ||
+            helperId.isEmpty ||
+            active.helperId == null ||
+            active.helperId == helperId)) {
       return active;
     }
 
@@ -373,6 +410,20 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
       } catch (_) {}
     }
     return null;
+  }
+
+  /// Memory first, then Cloud Run — used by Active tab after refresh.
+  Future<Task?> resolveHelperActiveTask({String? helperId}) async {
+    final local = getActiveTaskForHelper(helperId: helperId);
+    if (local != null) return local;
+    try {
+      final tasks = await _taskRepository.getHelperActiveTasks();
+      if (tasks.isEmpty) return null;
+      _helperActiveTask = tasks.first;
+      return _helperActiveTask;
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
