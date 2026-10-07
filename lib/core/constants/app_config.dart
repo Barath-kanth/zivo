@@ -26,7 +26,7 @@ abstract class AppConfig {
 
   static const String gcpApiBaseUrl = String.fromEnvironment(
     'GCP_API_BASE_URL',
-    defaultValue: 'http://localhost:8080',
+    defaultValue: 'https://zivo-api-ihp5vjzpsa-el.a.run.app',
   );
 
   static const String _dispatchRadiusKm = String.fromEnvironment(
