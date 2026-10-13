@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
 import 'app.dart';
 import 'blocs/auth/auth_bloc.dart';
+import 'blocs/a11y/a11y_cubit.dart';
 import 'blocs/mode/mode_cubit.dart';
 import 'blocs/task/task_bloc.dart';
 import 'blocs/wallet/wallet_bloc.dart';
@@ -75,6 +76,7 @@ void main() async {
             create: (ctx) =>
                 ModeCubit(authRepository: ctx.read<AuthRepository>()),
           ),
+          BlocProvider(create: (_) => A11yCubit()),
           BlocProvider(
             create: (ctx) =>
                 TaskBloc(taskRepository: ctx.read<TaskRepository>()),

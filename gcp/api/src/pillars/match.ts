@@ -301,12 +301,8 @@ Call tools, then pick one helper.`,
       research_note: RESEARCH,
     };
   } catch (err) {
-    const fallback = mockMatch(task, nearby);
-    return {
-      ...fallback,
-      explanation: `${fallback.explanation} (Gemini tools unavailable: ${
-        err instanceof Error ? err.message : 'error'
-      })`,
-    };
+    // Never leak Vertex/API errors into client-facing copy (429, JSON, etc.).
+    console.error('[matchHelpers] gemini tools failed', err);
+    return mockMatch(task, nearby);
   }
 }

@@ -10,6 +10,7 @@ import 'package:go_router/go_router.dart';
 import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
 import 'package:hyperlocal/blocs/task/task_bloc.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
+import 'package:hyperlocal/core/constants/app_config.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/router/app_router.dart';
 import 'package:hyperlocal/core/services/policy/qualification_gate.dart';
@@ -196,6 +197,10 @@ class _JobFeedScreenState extends State<JobFeedScreen>
 
         List<Task> tasks = [];
         if (state is TaskNearbyLoaded) tasks = state.tasks;
+        final me = context.read<AuthBloc>().state;
+        if (me is AuthAuthenticated) {
+          tasks = tasks.where((t) => t.clientId != me.profile.id).toList();
+        }
 
         if (tasks.isEmpty) {
           return SliverFillRemaining(
@@ -327,7 +332,7 @@ class JobCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      'LKR ${task.totalAmount.toStringAsFixed(2)}',
+                      AppConfig.money(task.totalAmount),
                       style: AppTextStyles.moneyMedium.copyWith(color: AppColors.helperAccent),
                     ),
                     Text('total', style: AppTextStyles.bodySmall),
@@ -441,17 +446,17 @@ class JobCard extends StatelessWidget {
                 child: Column(
                   children: [
                     _EarningsRow(label: 'Duration', value: '${task.estimatedHours} hours'),
-                    _EarningsRow(label: 'Rate', value: 'LKR ${task.hourlyRate.toStringAsFixed(2)}/hr'),
+                    _EarningsRow(label: 'Rate', value: '${AppConfig.money(task.hourlyRate)}/hr'),
                     const Divider(height: 16),
                     _EarningsRow(
                       label: 'Your Earnings',
-                      value: 'LKR ${(task.totalAmount * 0.9).toStringAsFixed(2)}',
+                      value: AppConfig.money(task.totalAmount * 0.9),
                       isTotal: true,
                       color: AppColors.helperAccent,
                     ),
                     _EarningsRow(
                       label: 'Platform Fee',
-                      value: 'LKR ${(task.totalAmount * 0.1).toStringAsFixed(2)} (10%)',
+                      value: '${AppConfig.money(task.totalAmount * 0.1)} (10%)',
                       color: AppColors.textMuted,
                     ),
                   ],
@@ -561,6 +566,18 @@ class JobCard extends StatelessWidget {
     Task task,
     String helperId,
   ) async {
+    if (task.clientId == helperId) {
+      if (!rootCtx.mounted) return;
+      ScaffoldMessenger.of(rootCtx).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'You cannot accept a task you posted. Switch accounts or wait for a helper.',
+          ),
+          backgroundColor: AppColors.errorColor,
+        ),
+      );
+      return;
+    }
     final quals =
         await rootCtx.read<TrustRepository>().getQualifications(helperId);
     final msg = QualificationGate.missingMessage(
@@ -622,7 +639,6 @@ class JobCard extends StatelessWidget {
   ) async {
     final candidates = ranking['candidates'] as List? ?? [];
     final top = candidates.isNotEmpty ? candidates.first as Map : null;
-    final mode = ranking['mode']?.toString() ?? '—';
     final selectedName =
         ranking['selected_helper_name']?.toString() ?? top?['name']?.toString();
     final nearestDep = ranking['nearest_deprioritized'] == true;
@@ -632,7 +648,7 @@ class JobCard extends StatelessWidget {
     await showDialog<void>(
       context: ctx,
       builder: (dCtx) => AlertDialog(
-        title: Text('Pillar C · Match · $mode'),
+        title: const Text('Explain my match'),
         content: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -646,6 +662,7 @@ class JobCard extends StatelessWidget {
                   color: nearestDep
                       ? AppColors.warningColor
                       : AppColors.successColor,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
               if (explanation.isNotEmpty) ...[
@@ -654,16 +671,21 @@ class JobCard extends StatelessWidget {
               ],
               if (candidates.isNotEmpty) ...[
                 const Gap(10),
-                Text('Ranked candidates', style: AppTextStyles.headingSmall),
+                Text('Why they fit', style: AppTextStyles.headingSmall),
                 const Gap(4),
                 ...candidates.take(4).map((c) {
                   final m = c as Map;
+                  final reasons = (m['reasons'] as List?)
+                          ?.map((e) => e.toString())
+                          .join(' · ') ??
+                      '';
                   return Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
+                    padding: const EdgeInsets.only(bottom: 8),
                     child: Text(
                       '${m['name']} · ${m['distanceKm']} km · score ${m['score']}'
                       '${m['trust_tier'] != null ? ' · ${m['trust_tier']}' : ''}'
-                      '${m['dispute_count'] != null ? ' · disputes ${m['dispute_count']}' : ''}',
+                      '${m['dispute_count'] != null ? ' · disputes ${m['dispute_count']}' : ''}'
+                      '${reasons.isNotEmpty ? '\n$reasons' : ''}',
                       style: AppTextStyles.bodySmall.copyWith(fontSize: 11),
                     ),
                   );
@@ -672,17 +694,7 @@ class JobCard extends StatelessWidget {
               if (tools.isNotEmpty) ...[
                 const Gap(8),
                 Text(
-                  'Tools: ${tools.map((t) => (t as Map)['name']).join(' → ')}',
-                  style: AppTextStyles.bodySmall.copyWith(
-                    color: AppColors.textMuted,
-                    fontSize: 10,
-                  ),
-                ),
-              ],
-              if (ranking['research_note'] != null) ...[
-                const Gap(8),
-                Text(
-                  ranking['research_note'].toString(),
+                  'Grounded on: ${tools.map((t) => (t as Map)['name']).join(' → ')}',
                   style: AppTextStyles.bodySmall.copyWith(
                     color: AppColors.textMuted,
                     fontSize: 10,
@@ -900,7 +912,7 @@ class _MapView extends StatelessWidget {
                 ),
               ),
               Text(
-                'LKR ${t.totalAmount.toStringAsFixed(2)}',
+                AppConfig.money(t.totalAmount),
                 style: AppTextStyles.headingSmall.copyWith(
                     color: AppColors.helperAccent),
               ),

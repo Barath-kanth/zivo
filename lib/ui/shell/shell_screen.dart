@@ -13,6 +13,7 @@ import 'package:hyperlocal/core/constants/app_colors.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/router/app_router.dart';
 import 'package:hyperlocal/core/utils/auth_gate.dart';
+import 'package:hyperlocal/ui/_shared/a11y_hub.dart';
 import 'package:hyperlocal/ui/client/client_home_screen.dart';
 import 'package:hyperlocal/ui/helper/helper_home_screen.dart';
 import 'mode_toggle_widget.dart';
@@ -27,6 +28,7 @@ class ShellScreen extends StatefulWidget {
 
 class _ShellScreenState extends State<ShellScreen> {
   Type? _prevModeType;
+  bool _inviteScheduled = false;
 
   @override
   void initState() {
@@ -41,6 +43,11 @@ class _ShellScreenState extends State<ShellScreen> {
     } else {
       context.read<ModeCubit>().initGuest();
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _inviteScheduled) return;
+      _inviteScheduled = true;
+      maybeShowA11yInvite(context);
+    });
   }
 
   int _calculateSelectedIndex(bool isHelper, String path) {
@@ -110,16 +117,34 @@ class _ShellScreenState extends State<ShellScreen> {
           final selectedIndex = _calculateSelectedIndex(isHelper, path);
 
           final desktop = MediaQuery.sizeOf(context).width >= 1100;
+          // Hide glass dock on create-task so Continue/Post is never buried under it.
+          final hideDock = desktop ||
+              MediaQuery.viewInsetsOf(context).bottom > 0 ||
+              path == AppRoutes.createTask;
           return Scaffold(
-            extendBody: !desktop,
+            extendBody: !desktop && !hideDock,
+            // One hub FAB — no top banner, no duplicate Speak/Describe stack.
+            floatingActionButton: desktop
+                ? null
+                : A11yHubFab(
+                    screenHint:
+                        'Zivo ${isHelper ? 'helper' : 'client'} screen at $path',
+                  ),
+            floatingActionButtonLocation:
+                FloatingActionButtonLocation.endFloat,
             body: Row(
               children: [
-                desktop ? DesktopSidebar(
-                  isHelper: isHelper,
-                  selectedIndex: selectedIndex,
-                  destinations: _navigationItems(isHelper),
-                  onDestinationSelected: (index) => _onNavTap(index, isHelper),
-                ) : const SizedBox.shrink(),
+                desktop
+                    ? DesktopSidebar(
+                        isHelper: isHelper,
+                        selectedIndex: selectedIndex,
+                        destinations: _navigationItems(isHelper),
+                        onDestinationSelected: (index) =>
+                            _onNavTap(index, isHelper),
+                        screenHint:
+                            'Zivo ${isHelper ? 'helper' : 'client'} screen at $path',
+                      )
+                    : const SizedBox.shrink(),
                 Expanded(
                   child: AppViewport(
                     child: _buildBodyContent(isHelper, widget.child),
@@ -127,9 +152,8 @@ class _ShellScreenState extends State<ShellScreen> {
                 ),
               ],
             ),
-            bottomNavigationBar: desktop || MediaQuery.viewInsetsOf(context).bottom > 0
-                ? null
-                : _buildBottomNav(isHelper, modeState, selectedIndex),
+            bottomNavigationBar:
+                hideDock ? null : _buildBottomNav(isHelper, modeState, selectedIndex),
           );
         },
       ),
@@ -137,7 +161,39 @@ class _ShellScreenState extends State<ShellScreen> {
   }
 
   Widget _buildBodyContent(bool isHelper, Widget child) {
-    final isHome = GoRouterState.of(context).uri.path == AppRoutes.shell;
+    final path = GoRouterState.of(context).uri.path;
+    final isHome = path == AppRoutes.shell;
+    final desktop = MediaQuery.sizeOf(context).width >= 1100;
+
+    // Desktop client: navigator stays in a fixed slot; activity rail is a sibling
+    // so Wallet / Account / Post never tear down the right-hand panel.
+    if (!isHelper && desktop) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: ShellRouteContent(
+              isHome: isHome,
+              routedChild: child,
+              home: const ClientHomeScreen(
+                key: ValueKey('client-services'),
+                pane: ClientHomePane.servicesOnly,
+                forceDesktopChrome: true,
+              ),
+            ),
+          ),
+          const SizedBox(
+            width: 320,
+            child: ClientHomeScreen(
+              key: ValueKey('client-rail'),
+              pane: ClientHomePane.railOnly,
+              forceDesktopChrome: true,
+            ),
+          ),
+        ],
+      );
+    }
+
     return ShellRouteContent(
       isHome: isHome,
       routedChild: child,
@@ -278,7 +334,7 @@ class _ShellScreenState extends State<ShellScreen> {
           return;
         }
         if (!mounted) return;
-        context.push(AppRoutes.createTask);
+        context.go(AppRoutes.createTask);
       } else if (index == 2) {
         if (!await requireAuth(context, returnTo: AppRoutes.wallet)) return;
         if (!mounted) return;

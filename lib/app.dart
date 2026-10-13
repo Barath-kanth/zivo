@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'blocs/auth/auth_bloc.dart';
+import 'blocs/a11y/a11y_cubit.dart';
 import 'core/router/app_router.dart';
 import 'core/constants/app_brand.dart';
 import 'core/constants/app_colors.dart';
@@ -38,16 +39,40 @@ class _HyperlocalAppState extends State<HyperlocalApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp.router(
-      title: AppBrand.appTitle,
-      debugShowCheckedModeBanner: false,
-      routerConfig: _router.config,
-      theme: _buildTheme(),
-      builder: (context, child) => ZivoLaunch(
-        child: child ?? const SizedBox.shrink(),
-      ),
+    return BlocBuilder<A11yCubit, bool>(
+      builder: (context, a11yOn) {
+        return MaterialApp.router(
+          title: AppBrand.appTitle,
+          debugShowCheckedModeBanner: false,
+          routerConfig: _router.config,
+          theme: _buildTheme(a11yOn),
+          builder: (context, child) {
+            final content = ZivoLaunch(
+              child: child ?? const SizedBox.shrink(),
+            );
+            if (!a11yOn) return content;
+            return MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: const TextScaler.linear(1.18),
+              ),
+              child: content,
+            );
+          },
+        );
+      },
     );
   }
 
-  ThemeData _buildTheme() => AppTheme.light;
+  ThemeData _buildTheme(bool a11yOn) {
+    final base = AppTheme.light;
+    if (!a11yOn) return base;
+    return base.copyWith(
+      visualDensity: VisualDensity.comfortable,
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          minimumSize: const Size(48, 48),
+        ),
+      ),
+    );
+  }
 }

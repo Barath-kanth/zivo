@@ -7,10 +7,13 @@ import 'package:go_router/go_router.dart';
 import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
 import 'package:hyperlocal/blocs/task/task_bloc.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
+import 'package:hyperlocal/core/constants/app_config.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
+import 'package:hyperlocal/core/router/app_router.dart';
 import 'package:hyperlocal/data/models/task.dart';
 import 'package:hyperlocal/data/repositories/task_repository.dart';
 import 'package:hyperlocal/ui/_shared/task_photo_gallery.dart';
+import 'package:hyperlocal/ui/_shared/mode_cover_banner.dart';
 import 'package:hyperlocal/blocs/mode/mode_cubit.dart';
 
 /// Helper Home — Feed of nearby human tasks to pick up.
@@ -180,7 +183,30 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
         backgroundColor: AppColors.backgroundDark,
         body: CustomScrollView(
           slivers: [
-            _buildHeader(),
+            SliverToBoxAdapter(
+              child: ModeCoverBanner(
+                isHelper: true,
+                height: 200,
+                searchHint: 'Search jobs near you',
+                onSearchTap: () {},
+                onModeTap: () {
+                  final mode = context.read<ModeCubit>();
+                  if (mode.state is! ModeToggling) mode.toggleMode();
+                },
+                trailing: Material(
+                  color: Colors.white.withValues(alpha: 0.92),
+                  shape: const CircleBorder(),
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: () => context.go(AppRoutes.account),
+                    child: const Padding(
+                      padding: EdgeInsets.all(8),
+                      child: Icon(Icons.person_outline, size: 18),
+                    ),
+                  ),
+                ),
+              ),
+            ),
             _buildPresenceCard(),
             _buildStreetRouteCard(),
             _buildEarningsBar(),
@@ -510,7 +536,7 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
                     icon: Icons.account_balance_wallet_outlined,
                     label: 'Total Earned',
                     value:
-                        'LKR ${(profile?.helperEarnings ?? 0.0).toStringAsFixed(2)}',
+                        AppConfig.money(profile?.helperEarnings ?? 0.0),
                   ),
                   _Divider(),
                   _EarningStat(
@@ -634,6 +660,10 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
         }
 
         var tasks = state is TaskNearbyLoaded ? state.tasks : <Task>[];
+        final me = context.read<AuthBloc>().state;
+        if (me is AuthAuthenticated) {
+          tasks = tasks.where((t) => t.clientId != me.profile.id).toList();
+        }
         if (_selectedFilter != 'All') {
           tasks = tasks.where((t) {
             if (_selectedFilter == '🚶 Queue') return t.category == TaskCategory.queueStanding;
@@ -810,7 +840,7 @@ class _JobCard extends StatelessWidget {
                             style: AppTextStyles.bodySmall
                                 .copyWith(fontSize: 10)),
                         Text(
-                          'LKR ${(task.totalAmount * 0.9).toStringAsFixed(2)}',
+                          AppConfig.money(task.totalAmount * 0.9),
                           style: AppTextStyles.headingSmall.copyWith(
                               color: AppColors.helperAccent),
                         ),
@@ -835,11 +865,21 @@ class _JobCard extends StatelessWidget {
                       onPressed: () {
                         final authState =
                             context.read<AuthBloc>().state;
-                        if (authState is AuthAuthenticated) {
-                          context.read<TaskBloc>().add(TaskAccept(
-                              taskId: task.id,
-                              helperId: authState.profile.id));
+                        if (authState is! AuthAuthenticated) return;
+                        if (task.clientId == authState.profile.id) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'You cannot accept a task you posted.',
+                              ),
+                              backgroundColor: AppColors.errorColor,
+                            ),
+                          );
+                          return;
                         }
+                        context.read<TaskBloc>().add(TaskAccept(
+                            taskId: task.id,
+                            helperId: authState.profile.id));
                       },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.helperAccent,

@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
 import 'package:hyperlocal/core/constants/app_config.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
+import 'package:hyperlocal/core/utils/humanize_error.dart';
 import 'package:hyperlocal/data/models/task.dart';
 import 'package:hyperlocal/data/models/task_status.dart';
 import 'package:hyperlocal/data/repositories/task_repository.dart';
@@ -122,7 +123,7 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
-                  '🎉 Job complete! +LKR ${state.task.totalAmount.toStringAsFixed(2)} added to helper wallet.',
+                  '🎉 Job complete! +${AppConfig.money(state.task.totalAmount)} added to helper wallet.',
                 ),
                 backgroundColor: AppColors.successColor,
               ),
@@ -216,12 +217,12 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
                   ),
                 ),
                 if (isInProgress &&
-                    activeTask.requiresPurchaseProof &&
-                    activeTask.proofSubmittedAt == null) ...[
+                    activeTask.needsCompletionProof &&
+                    !activeTask.hasCompletionProof) ...[
                   const Gap(16),
                   _buildProofGate(activeTask),
                 ],
-                if (isInProgress && activeTask.proofSubmittedAt != null) ...[
+                if (isInProgress && activeTask.hasCompletionProof) ...[
                   const Gap(12),
                   Container(
                     width: double.infinity,
@@ -231,8 +232,10 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
-                      'Receipt submitted (${AppConfig.money(activeTask.goodsSpent)}). '
-                      'Wait for client to check goods, then enter End OTP.',
+                      activeTask.requiresPurchaseProof
+                          ? 'Proof submitted (${AppConfig.money(activeTask.goodsSpent)}). '
+                              'Wait for client to check, then enter End OTP.'
+                          : 'Completion proof submitted. Ask the client for End OTP.',
                       style: AppTextStyles.bodySmall,
                     ),
                   ),
@@ -254,6 +257,7 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
   }
 
   Widget _buildProofGate(Task task) {
+    final grocery = task.requiresPurchaseProof;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
@@ -265,30 +269,191 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Purchase proof required',
-              style: AppTextStyles.headingSmall),
+          Text(
+            grocery ? 'Purchase proof required' : 'Completion proof required',
+            style: AppTextStyles.headingSmall,
+          ),
           const Gap(6),
           Text(
-            'Pillar B: photograph the till receipt + confirm the shopping list. '
-            'Receipt check reconciles items / anomalies / total vs budget '
-            '(${AppConfig.money(task.goodsBudget)}). Never take cash from the client.',
+            grocery
+                ? 'Photograph the till receipt + bag. Never take cash from the client. '
+                    'Budget ${AppConfig.money(task.goodsBudget)}.'
+                : 'Check off the job list and add before/after photos. '
+                    'End OTP stays locked until proof is submitted.',
             style: AppTextStyles.bodySmall,
           ),
+          if (task.completionChecklist.isNotEmpty) ...[
+            const Gap(10),
+            ...task.completionChecklist.map(
+              (item) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  children: [
+                    const Icon(Icons.check_box_outline_blank, size: 16),
+                    const Gap(8),
+                    Expanded(
+                      child: Text(item, style: AppTextStyles.bodySmall),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
           const Gap(12),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: () => _showProofDialog(task),
+              onPressed: () => grocery
+                  ? _showProofDialog(task)
+                  : _showCompletionProofDialog(task),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.black,
                 foregroundColor: Colors.white,
               ),
-              child: const Text('Run receipt reconciliation'),
+              child: Text(
+                grocery ? 'Run receipt reconciliation' : 'Submit completion proof',
+              ),
             ),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _showCompletionProofDialog(Task task) async {
+    final checklist = task.completionChecklist.isNotEmpty
+        ? List<String>.from(task.completionChecklist)
+        : <String>[
+            'Before photo',
+            'After photo',
+            'Work area left tidy',
+          ];
+    final checked = <String>{};
+    final photos = <List<int>>[];
+    final noteCtrl = TextEditingController();
+    var submitting = false;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            return AlertDialog(
+              title: const Text('Completion proof'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Tick what you finished and add 1–3 photos.',
+                      style: AppTextStyles.bodySmall,
+                    ),
+                    const Gap(12),
+                    ...checklist.map(
+                      (item) => CheckboxListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        value: checked.contains(item),
+                        title: Text(item, style: AppTextStyles.bodySmall),
+                        onChanged: (v) => setLocal(() {
+                          if (v == true) {
+                            checked.add(item);
+                          } else {
+                            checked.remove(item);
+                          }
+                        }),
+                      ),
+                    ),
+                    const Gap(8),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final picker = ImagePicker();
+                        final file = await picker.pickImage(
+                          source: ImageSource.gallery,
+                          imageQuality: 75,
+                          maxWidth: 1600,
+                        );
+                        if (file == null) return;
+                        final bytes = await file.readAsBytes();
+                        setLocal(() {
+                          if (photos.length < 3) photos.add(bytes);
+                        });
+                      },
+                      icon: const Icon(Icons.add_a_photo_outlined, size: 18),
+                      label: Text(
+                        photos.isEmpty
+                            ? 'Add photo'
+                            : '${photos.length}/3 photos',
+                      ),
+                    ),
+                    const Gap(8),
+                    TextField(
+                      controller: noteCtrl,
+                      maxLines: 2,
+                      decoration: const InputDecoration(
+                        labelText: 'Note (optional)',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: submitting ? null : () => Navigator.pop(ctx, false),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: submitting || checked.isEmpty
+                      ? null
+                      : () async {
+                          setLocal(() => submitting = true);
+                          try {
+                            await context
+                                .read<TaskRepository>()
+                                .submitCompletionProof(
+                                  taskId: task.id,
+                                  checkedItems: checked.toList(),
+                                  photoBytes: photos,
+                                  note: noteCtrl.text.trim(),
+                                );
+                            if (ctx.mounted) Navigator.pop(ctx, true);
+                          } catch (e) {
+                            setLocal(() => submitting = false);
+                            if (!ctx.mounted) return;
+                            ScaffoldMessenger.of(ctx).showSnackBar(
+                              SnackBar(
+                                content: Text(humanizeError(e)),
+                                backgroundColor: AppColors.errorColor,
+                              ),
+                            );
+                          }
+                        },
+                  child: submitting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Submit proof'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    noteCtrl.dispose();
+    if (ok == true && mounted) {
+      context.read<OtpBloc>().add(OtpSubscribeToTask(widget.taskId));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Completion proof submitted'),
+          backgroundColor: AppColors.successColor,
+        ),
+      );
+    }
   }
 
   Future<void> _showProofDialog(Task task) async {
@@ -607,7 +772,7 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
             children: [
               _DetailChip(Icons.schedule_rounded, '${task.estimatedHours}h'),
               const Gap(10),
-              _DetailChip(Icons.payments_outlined, 'LKR ${(task.totalAmount * 0.9).toStringAsFixed(2)} earnings'),
+              _DetailChip(Icons.payments_outlined, '${AppConfig.money(task.totalAmount * 0.9)} earnings'),
               const Gap(10),
               if (task.locationLabel != null)
                 _DetailChip(Icons.location_on_outlined, task.locationLabel!),
@@ -628,9 +793,13 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
     final accentColor = isInProgress ? AppColors.helperAccent : AppColors.accent;
     final phaseLabel = isInProgress ? 'End OTP' : 'Start OTP';
     final instruction = isInProgress
-        ? (task.requiresPurchaseProof && task.proofSubmittedAt == null
-            ? 'Upload supermarket receipt + bag photos first. End OTP is blocked until proof is submitted — never take cash from the client.'
-            : 'Enter the End OTP shown on the client’s phone after they check goods vs receipt. Earnings + goods reimbursement then release from escrow.')
+        ? (task.needsCompletionProof && !task.hasCompletionProof
+            ? (task.requiresPurchaseProof
+                ? 'Upload supermarket receipt + bag photos first. End OTP is blocked until proof is submitted — never take cash from the client.'
+                : 'Submit completion proof (checklist + photos) first. End OTP stays locked until then.')
+            : (task.requiresPurchaseProof
+                ? 'Enter the End OTP after the client checks goods vs receipt. Escrow then releases.'
+                : 'Enter the End OTP after the client reviews your proof. Escrow then releases.'))
         : 'Enter the Start OTP shown on the client’s phone to begin.';
 
     return Container(
@@ -839,7 +1008,7 @@ class _CompletedView extends StatelessWidget {
                   Text('You Earned', style: AppTextStyles.bodyMedium),
                   const Gap(4),
                   Text(
-                    'LKR ${earnings.toStringAsFixed(2)}',
+                    AppConfig.money(earnings),
                     style: AppTextStyles.moneyLarge.copyWith(color: AppColors.helperAccent),
                   ),
                 ],

@@ -74,7 +74,16 @@ export type TaskRow = {
   hourly_rate: number;
   total_amount: number;
   goods_budget: number;
+  goods_spent?: number;
   requires_purchase_proof: boolean;
+  /** Labor jobs need before/after style proof; grocery also uses purchase proof. */
+  requires_completion_proof?: boolean;
+  completion_checklist?: string[];
+  proof_submitted_at?: string;
+  proof_photo_urls?: string[];
+  proof_photo_paths?: string[];
+  proof_checked_items?: string[];
+  proof_note?: string;
   lat: number;
   lon: number;
   location_address?: string;
@@ -98,6 +107,21 @@ export type TaskRow = {
   trust_hold?: boolean;
   trust_hold_reason?: string;
   last_trust_review_id?: string;
+  disputed_at?: string;
+  dispute_reason?: string;
+  /** Client-facing "Explain my match" copy. */
+  match_explanation?: string;
+  match_reasons?: string[];
+  match_mode?: 'mock' | 'gemini' | 'dispatch' | 'manual';
+  /** One problem → several tasks (bundle checkout). */
+  bundle_id?: string;
+  bundle_title?: string;
+  /** Family Assist — book on behalf of someone else. */
+  booked_for_user_id?: string;
+  booked_for_name?: string;
+  /** Shared live link for family watchers. */
+  share_token?: string;
+  watcher_ids?: string[];
 };
 
 /** Persisted Gemini trust verdict over job evidence (Cup differentiator). */
@@ -278,10 +302,16 @@ async function allTasks(): Promise<TaskRow[]> {
   );
 }
 
+function scrubDemoDisplayName(name: string): string {
+  return name
+    .replace(/\s*\((verified|unverified|care)\)/gi, '')
+    .trim();
+}
+
 async function ensureDemoHelperPresence() {
-  for (const [id, dLat, dLon] of [
-    ['h1', 0.001, 0.0005],
-    ['h3', 0.003, -0.001],
+  for (const [id, dLat, dLon, cleanName] of [
+    ['h1', 0.001, 0.0005, 'Nimal'],
+    ['h3', 0.003, -0.001, 'Fathima'],
   ] as const) {
     const u = await loadUser(id);
     if (!u || u.kyc_status !== 'verified') continue;
@@ -291,6 +321,11 @@ async function ensureDemoHelperPresence() {
       u.presence_lat = 6.9271 + dLat;
       u.presence_lon = 79.8612 + dLon;
       u.presence_at = new Date().toISOString();
+    }
+    // Drop leftover "(verified)" style suffixes from earlier demo seeds.
+    const scrubbed = scrubDemoDisplayName(u.full_name || cleanName);
+    if (scrubbed && scrubbed !== u.full_name) {
+      u.full_name = scrubbed || cleanName;
     }
     // Demo: Fathima is Neighbor-Vouched (inside-home unlocked); Nimal is not.
     if (id === 'h3') {
@@ -323,7 +358,7 @@ export async function seedDemo() {
   const demoHelpers: Array<Partial<UserProfile> & { id: string; full_name: string }> = [
     {
       id: 'h1',
-      full_name: 'Nimal (verified)',
+      full_name: 'Nimal',
       is_helper_active: true,
       kyc_status: 'verified',
       helper_skills: ['driving'],
@@ -332,7 +367,7 @@ export async function seedDemo() {
     },
     {
       id: 'h2',
-      full_name: 'Sajith (unverified)',
+      full_name: 'Sajith',
       is_helper_active: false,
       kyc_status: 'unverified',
       helper_skills: [],
@@ -340,7 +375,7 @@ export async function seedDemo() {
     },
     {
       id: 'h3',
-      full_name: 'Fathima (care)',
+      full_name: 'Fathima',
       is_helper_active: true,
       kyc_status: 'verified',
       helper_skills: ['care'],
@@ -550,6 +585,12 @@ export async function createTask(input: {
   deadline_at?: string;
   difficulty?: string;
   physical_effort?: string;
+  bundle_id?: string;
+  bundle_title?: string;
+  booked_for_user_id?: string;
+  booked_for_name?: string;
+  /** Skip wallet hold when caller already reserved funds (bundle). */
+  skip_escrow?: boolean;
 }): Promise<TaskRow> {
   const client = await loadUser(input.client_id);
   if (!client) throw new Error('Client not found');
@@ -558,18 +599,31 @@ export async function createTask(input: {
   }
   const total = input.estimated_hours * input.hourly_rate;
   const hold = total + input.goods_budget;
-  if (client.wallet_balance < hold) {
-    throw new Error('Insufficient wallet balance for escrow hold');
+  if (!input.skip_escrow) {
+    if (client.wallet_balance < hold) {
+      throw new Error('Insufficient wallet balance for escrow hold');
+    }
+    client.wallet_balance -= hold;
+    client.escrow_balance += hold;
+    client.total_tasks_posted += 1;
+    await saveUser(client);
+  } else {
+    client.total_tasks_posted += 1;
+    await saveUser(client);
   }
-  client.wallet_balance -= hold;
-  client.escrow_balance += hold;
-  client.total_tasks_posted += 1;
-  await saveUser(client);
 
-  const id = `task_${Date.now()}`;
+  const id = `task_${Date.now()}_${Math.floor(Math.random() * 900 + 100)}`;
   const confirm = String(Math.floor(1000 + Math.random() * 9000));
   const startOtp = String(Math.floor(1000 + Math.random() * 9000));
   const endOtp = String(Math.floor(1000 + Math.random() * 9000));
+  const { buildCompletionChecklist } = await import('./pillars/completion_proof.js');
+  const checklist = await buildCompletionChecklist({
+    title: input.title,
+    description: input.description,
+    category: input.category,
+    goodsBudget: input.goods_budget,
+  });
+
   const row: TaskRow = {
     id,
     title: input.title,
@@ -582,6 +636,8 @@ export async function createTask(input: {
     total_amount: total,
     goods_budget: input.goods_budget,
     requires_purchase_proof: input.goods_budget > 0,
+    requires_completion_proof: true,
+    completion_checklist: checklist.checklist,
     lat: input.lat,
     lon: input.lon,
     location_address: input.location_address,
@@ -595,10 +651,207 @@ export async function createTask(input: {
     deadline_at: input.deadline_at,
     difficulty: input.difficulty,
     physical_effort: input.physical_effort,
+    bundle_id: input.bundle_id,
+    bundle_title: input.bundle_title,
+    booked_for_user_id: input.booked_for_user_id,
+    booked_for_name: input.booked_for_name,
+    watcher_ids: [],
   };
   await saveTask(row);
-  await addLedger(client.id, id, 'escrow_hold', -hold, client.wallet_balance, 'Escrow hold');
+  if (!input.skip_escrow) {
+    await addLedger(
+      client.id,
+      id,
+      'escrow_hold',
+      -hold,
+      client.wallet_balance,
+      'Escrow hold',
+    );
+  }
   return row;
+}
+
+/** Checkout several planned tasks as one escrow bundle. */
+export async function createTaskBundle(input: {
+  client_id: string;
+  bundle_title: string;
+  lat: number;
+  lon: number;
+  location_address?: string;
+  location_label?: string;
+  deadline_at: string;
+  booked_for_user_id?: string;
+  booked_for_name?: string;
+  tasks: Array<{
+    title: string;
+    description: string;
+    category: string;
+    estimated_hours: number;
+    hourly_rate: number;
+    goods_budget: number;
+  }>;
+}): Promise<{ bundle_id: string; bundle_title: string; tasks: TaskRow[]; total_hold_lkr: number }> {
+  if (!input.tasks.length) throw new Error('Select at least one task');
+  if (input.tasks.length > 6) throw new Error('Bundle max is 6 tasks');
+
+  const client = await loadUser(input.client_id);
+  if (!client) throw new Error('Client not found');
+  if (client.kyc_status !== 'verified') {
+    throw new Error('KYC verification required to post tasks');
+  }
+
+  let totalHold = 0;
+  for (const t of input.tasks) {
+    totalHold += t.estimated_hours * t.hourly_rate + (t.goods_budget || 0);
+  }
+  if (client.wallet_balance < totalHold) {
+    throw new Error(
+      `Insufficient wallet for bundle escrow (need LKR ${Math.round(totalHold)})`,
+    );
+  }
+
+  client.wallet_balance -= totalHold;
+  client.escrow_balance += totalHold;
+  await saveUser(client);
+
+  const bundleId = `bundle_${Date.now()}`;
+  const created: TaskRow[] = [];
+  for (const t of input.tasks) {
+    const labor = t.estimated_hours * t.hourly_rate;
+    const row = await createTask({
+      client_id: input.client_id,
+      title: t.title,
+      description: t.description,
+      category: t.category,
+      estimated_hours: t.estimated_hours,
+      hourly_rate: t.hourly_rate,
+      goods_budget: t.goods_budget || 0,
+      lat: input.lat,
+      lon: input.lon,
+      location_address: input.location_address,
+      location_label: input.location_label,
+      deadline_at: input.deadline_at,
+      bundle_id: bundleId,
+      bundle_title: input.bundle_title,
+      booked_for_user_id: input.booked_for_user_id,
+      booked_for_name: input.booked_for_name,
+      skip_escrow: true,
+    });
+    // Fix total_amount to match quoted labor (createTask recomputes hours*rate).
+    row.total_amount = labor;
+    await saveTask(row);
+    created.push(row);
+  }
+
+  await addLedger(
+    client.id,
+    bundleId,
+    'escrow_hold',
+    -totalHold,
+    client.wallet_balance,
+    `Bundle escrow · ${input.bundle_title}`,
+  );
+
+  return {
+    bundle_id: bundleId,
+    bundle_title: input.bundle_title,
+    tasks: created,
+    total_hold_lkr: Math.round(totalHold),
+  };
+}
+
+/** Enable Family Assist shared live link for a task the user owns. */
+export async function enableTaskShare(
+  taskId: string,
+  requesterId: string,
+): Promise<{ share_token: string; task: TaskRow }> {
+  const task = await loadTask(taskId);
+  if (!task) throw new Error('Task not found');
+  if (task.client_id !== requesterId) {
+    throw new Error('Only the booker can share live updates');
+  }
+  if (!task.share_token) {
+    task.share_token = `live_${taskId.replace(/[^a-zA-Z0-9]/g, '').slice(-10)}_${Math.floor(
+      Math.random() * 9000 + 1000,
+    )}`;
+    await saveTask(task);
+  }
+  return { share_token: task.share_token, task };
+}
+
+/** Public (token) live snapshot for family — no OTP secrets. */
+export async function getSharedLive(token: string): Promise<{
+  title: string;
+  status: string;
+  status_label: string;
+  booked_for_name?: string;
+  helper_name?: string;
+  bundle_title?: string;
+  updated_hint: string;
+  share_token: string;
+}> {
+  const all = await allTasks();
+  const task = all.find((t) => t.share_token === token);
+  if (!task) throw new Error('Shared link not found or expired');
+
+  const statusLabel: Record<string, string> = {
+    open: 'Looking for a helper',
+    matched: 'Helper matched — on the way',
+    in_progress: 'Helper arrived / job in progress',
+    completed: 'Completed',
+    cancelled: 'Cancelled',
+    disputed: 'Under review',
+  };
+
+  let hint = 'We will update this page when status changes.';
+  if (task.status === 'matched') {
+    hint = 'A helper is coming. Stay available at the location.';
+  } else if (task.status === 'in_progress') {
+    hint = 'Helper has started. You can ask the booker for the end code when done.';
+  } else if (task.status === 'completed') {
+    hint = 'Job finished and escrow released.';
+  }
+
+  return {
+    title: task.title,
+    status: task.status,
+    status_label: statusLabel[task.status] ?? task.status,
+    booked_for_name: task.booked_for_name,
+    helper_name: task.helper?.full_name,
+    bundle_title: task.bundle_title,
+    updated_hint: hint,
+    share_token: token,
+  };
+}
+
+/** Add signed-in family member as watcher (also gets task in /me/watching). */
+export async function watchTask(
+  taskId: string,
+  watcherId: string,
+): Promise<TaskRow> {
+  const task = await loadTask(taskId);
+  if (!task) throw new Error('Task not found');
+  const watchers = new Set(task.watcher_ids ?? []);
+  watchers.add(watcherId);
+  task.watcher_ids = [...watchers];
+  if (!task.share_token) {
+    const enabled = await enableTaskShare(taskId, task.client_id);
+    return enabled.task;
+  }
+  await saveTask(task);
+  return task;
+}
+
+export async function listWatchingTasks(userId: string): Promise<TaskRow[]> {
+  return (await allTasks())
+    .filter((t) => (t.watcher_ids ?? []).includes(userId))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
+export async function listBundleTasks(bundleId: string): Promise<TaskRow[]> {
+  return (await allTasks())
+    .filter((t) => t.bundle_id === bundleId)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 
 export async function getTask(id: string) {
@@ -622,9 +875,15 @@ export async function listHelperActiveTasks(helperId: string) {
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
-export async function listOpenTasks(helperLat: number, helperLng: number) {
+export async function listOpenTasks(
+  helperLat: number,
+  helperLng: number,
+  /** When set, hide tasks posted by this user (cannot help on your own job). */
+  excludeClientId?: string,
+) {
   return (await allTasks())
     .filter((t) => t.status === 'open')
+    .filter((t) => !excludeClientId || t.client_id !== excludeClientId)
     .map((t) => ({
       ...t,
       distance_km: haversineKm(
@@ -641,6 +900,9 @@ export async function acceptTask(taskId: string, helperId: string) {
   const helper = await loadUser(helperId);
   if (!task) throw new Error('Task not found');
   if (!helper) throw new Error('Helper not found');
+  if (task.client_id === helperId) {
+    throw new Error('Cannot accept your own task — switch accounts or wait for another helper');
+  }
   if (helper.kyc_status !== 'verified') throw new Error('Helper must be KYC verified');
   // Auto-activate helper mode if they are already verified (UI toggle may lag).
   if (!helper.is_helper_active) {
@@ -658,6 +920,11 @@ export async function acceptTask(taskId: string, helperId: string) {
   await saveTask(task);
   try {
     await ensureTaskChat(task.id);
+    const helperName = helper.full_name?.trim() || 'A helper';
+    await appendSystemChatMessage(
+      task.id,
+      `${helperName} accepted your job. Open Active Requests and tap “Send Start OTP in chat” when you’re ready — no need to read it aloud.`,
+    );
   } catch {
     /* chat is best-effort at match */
   }
@@ -680,6 +947,65 @@ export async function startTask(taskId: string, startOtp: string) {
   }
   task.status = 'in_progress';
   await saveTask(task);
+  try {
+    await appendSystemChatMessage(
+      task.id,
+      'Job started. When the work looks good, the client can tap “Send End OTP in chat” from Active Requests to finish and release escrow.',
+    );
+  } catch {
+    /* best-effort */
+  }
+  return task;
+}
+
+/** Helper submits completion proof (photos + checklist). Grocery may also attach receipt verdict. */
+export async function submitCompletionProof(input: {
+  taskId: string;
+  helperId: string;
+  checkedItems: string[];
+  photoUrls?: string[];
+  photoPaths?: string[];
+  note?: string;
+  receiptTotalLkr?: number;
+}): Promise<TaskRow> {
+  const task = await loadTask(input.taskId);
+  if (!task) throw new Error('Task not found');
+  if (task.helper_id !== input.helperId) {
+    throw new Error('Only the assigned helper can submit proof');
+  }
+  if (task.status !== 'in_progress' && task.status !== 'matched') {
+    throw new Error('Proof only after the job is matched or in progress');
+  }
+  const checklist = task.completion_checklist ?? [];
+  const checked = input.checkedItems.map((s) => s.trim()).filter(Boolean);
+  if (checklist.length > 0 && checked.length === 0) {
+    throw new Error('Check at least one completion item');
+  }
+  task.proof_checked_items = checked;
+  task.proof_photo_urls = (input.photoUrls ?? []).slice(0, 3);
+  task.proof_photo_paths = (input.photoPaths ?? []).slice(0, 3);
+  task.proof_note = input.note?.trim().slice(0, 400) || undefined;
+  task.proof_submitted_at = new Date().toISOString();
+  if (
+    typeof input.receiptTotalLkr === 'number' &&
+    Number.isFinite(input.receiptTotalLkr) &&
+    input.receiptTotalLkr >= 0
+  ) {
+    task.goods_spent = Math.min(input.receiptTotalLkr, task.goods_budget);
+  }
+  await saveTask(task);
+  try {
+    await appendSystemChatMessage(
+      task.id,
+      `Completion proof submitted (${checked.length} checklist item(s)${
+        task.proof_photo_urls?.length
+          ? `, ${task.proof_photo_urls.length} photo(s)`
+          : ''
+      }). Client can review before End OTP.`,
+    );
+  } catch {
+    /* optional */
+  }
   return task;
 }
 
@@ -696,6 +1022,13 @@ export async function completeTask(
   }
   if (task.status !== 'in_progress' && task.status !== 'matched') {
     throw new Error(`Cannot complete from status ${task.status}`);
+  }
+  const needsProof =
+    task.requires_completion_proof !== false || task.requires_purchase_proof;
+  if (needsProof && !task.proof_submitted_at) {
+    throw new Error(
+      'Helper must submit completion proof (photos + checklist) before End OTP',
+    );
   }
   if (input.confirm_code !== task.confirm_code && input.confirm_code !== task.end_otp) {
     throw new Error('Invalid End OTP — ask the client for the End code (not Start)');
@@ -971,6 +1304,100 @@ export async function listOpenBatchesNearby(
     .sort((a, b) => a.distance_km - b.distance_km);
 }
 
+const DEMO_BATCH_ID = 'batch_demo_colombo';
+const DEMO_BATCH_WINDOW_SEC = 600;
+
+/**
+ * Keep a joinable street-batch window near the caller for Cup demos when
+ * nobody has Instant-Dispatched recently (otherwise home looks empty).
+ */
+export async function ensureDemoStreetBatch(
+  lat: number,
+  lon: number,
+): Promise<BatchWindow> {
+  const now = Date.now();
+  const existing = await loadBatch(DEMO_BATCH_ID);
+  const helper =
+    (await loadUser('h1')) ??
+    (await loadUser('h3')) ??
+    (await listLiveHelpersNearby(lat, lon, 5))[0];
+  const helperId = helper?.id ?? 'h1';
+  const helperName =
+    (helper?.full_name || 'Nimal').replace(/\s*\((verified|unverified|care)\)/gi, '').trim() ||
+    'Nimal';
+
+  if (
+    existing &&
+    existing.status === 'open' &&
+    new Date(existing.expires_at).getTime() > now + 30_000
+  ) {
+    // Keep pin near the querying client so radius filter always hits.
+    existing.lat = lat;
+    existing.lon = lon;
+    existing.helper_id = helperId;
+    existing.helper_name = helperName;
+    await saveBatch(existing);
+    return existing;
+  }
+
+  const win: BatchWindow = {
+    id: DEMO_BATCH_ID,
+    anchor_task_id: existing?.anchor_task_id ?? `demo_anchor_${DEMO_BATCH_ID}`,
+    helper_id: helperId,
+    helper_name: helperName,
+    lat,
+    lon,
+    street_label: 'Your block · demo piggyback',
+    opened_at: new Date(now).toISOString(),
+    expires_at: new Date(now + DEMO_BATCH_WINDOW_SEC * 1000).toISOString(),
+    status: 'open',
+    member_task_ids: existing?.member_task_ids?.length
+      ? existing.member_task_ids
+      : [`demo_anchor_${DEMO_BATCH_ID}`],
+    max_members: 4,
+  };
+  await saveBatch(win);
+  return win;
+}
+
+/** Client or helper freezes escrow and marks the job disputed. */
+export async function openTaskDispute(input: {
+  taskId: string;
+  userId: string;
+  reason: string;
+}): Promise<TaskRow> {
+  const task = await loadTask(input.taskId);
+  if (!task) throw new Error('Task not found');
+  if (task.client_id !== input.userId && task.helper_id !== input.userId) {
+    throw new Error('Only the client or helper can open a dispute');
+  }
+  if (task.status === 'completed' || task.status === 'cancelled') {
+    throw new Error('Cannot dispute a finished job');
+  }
+  if (task.status === 'disputed') {
+    return task;
+  }
+  const reason = input.reason.trim().slice(0, 500);
+  if (reason.length < 8) {
+    throw new Error('Please describe the issue (at least 8 characters)');
+  }
+  task.status = 'disputed';
+  task.disputed_at = new Date().toISOString();
+  task.dispute_reason = reason;
+  task.trust_hold = true;
+  task.trust_hold_reason = reason;
+  await saveTask(task);
+  try {
+    await appendSystemChatMessage(
+      task.id,
+      `Dispute opened — escrow frozen. ${reason}`,
+    );
+  } catch {
+    /* chat optional */
+  }
+  return task;
+}
+
 export async function appendBatchMember(
   batchId: string,
   taskId: string,
@@ -1172,7 +1599,12 @@ const HELPER_GEO_OFFSET: Record<string, { dLat: number; dLng: number }> = {
 
 export async function helpersForMatch(task: TaskRow) {
   return (await allUsers())
-    .filter((u) => u.is_helper_active && u.kyc_status === 'verified')
+    .filter(
+      (u) =>
+        u.id !== task.client_id &&
+        u.is_helper_active &&
+        u.kyc_status === 'verified',
+    )
     .map((u) => {
       const off = HELPER_GEO_OFFSET[u.id] ?? { dLat: 0.02, dLng: 0.01 };
       const distanceKm = haversineKm(
@@ -1182,6 +1614,31 @@ export async function helpersForMatch(task: TaskRow) {
       return { helper: u, distanceKm };
     })
     .filter((x) => x.distanceKm <= DISPATCH_RADIUS_KM);
+}
+
+/** Attach client-readable match explanation onto a task (best-effort). */
+export async function attachMatchExplanation(
+  task: TaskRow,
+  opts: {
+    explanation: string;
+    reasons?: string[];
+    mode?: TaskRow['match_mode'];
+  },
+): Promise<TaskRow> {
+  // Never persist Vertex / HTTP error dumps for client UI.
+  let explanation = opts.explanation.slice(0, 1200);
+  const leak = explanation.search(
+    /Gemini tools unavailable|VertexAI\.|RESOURCE_EXHAUSTED|"error":\s*\{/i,
+  );
+  if (leak >= 0) explanation = explanation.slice(0, leak).trim();
+  if (!explanation) {
+    explanation = 'Matched using skills, distance, availability and trust.';
+  }
+  task.match_explanation = explanation;
+  if (opts.reasons?.length) task.match_reasons = opts.reasons.slice(0, 8);
+  if (opts.mode) task.match_mode = opts.mode;
+  await saveTask(task);
+  return task;
 }
 
 function assertChatParticipant(task: TaskRow, userId: string): 'client' | 'helper' {

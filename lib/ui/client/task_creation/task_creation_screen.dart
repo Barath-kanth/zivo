@@ -15,7 +15,13 @@ import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/router/app_router.dart';
 import 'package:hyperlocal/core/services/policy/community_policy_engine.dart';
 import 'package:hyperlocal/core/utils/auth_gate.dart';
+import 'package:hyperlocal/core/utils/humanize_error.dart';
+import 'package:hyperlocal/core/utils/speak_text.dart';
+import 'package:hyperlocal/core/utils/voice_recorder.dart';
 import 'package:hyperlocal/data/models/task.dart';
+import 'package:hyperlocal/blocs/a11y/a11y_cubit.dart';
+import 'package:hyperlocal/ui/_shared/a11y_widgets.dart';
+import 'package:hyperlocal/ui/_shared/task_bundle_sheet.dart';
 import 'package:hyperlocal/data/models/task_status.dart';
 import 'package:hyperlocal/data/repositories/profile_repository.dart';
 import 'package:hyperlocal/data/repositories/task_repository.dart';
@@ -71,6 +77,11 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
   bool _fieldsLoading = false;
   String _fieldsHeadline = 'A few details for a fair price';
   String _fieldsNote = '';
+  bool _photoSuggesting = false;
+  Map<String, dynamic>? _photoSuggestion;
+  final Map<String, TextEditingController> _photoQuestionCtrls = {};
+  bool _voiceListening = false;
+  String _voiceLang = 'en'; // en | ta | si
 
   // Sri Lankan cities
   static const _cityPresets = [
@@ -158,6 +169,9 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       c.dispose();
     }
     for (final c in _fieldCtrls.values) {
+      c.dispose();
+    }
+    for (final c in _photoQuestionCtrls.values) {
       c.dispose();
     }
     super.dispose();
@@ -281,9 +295,15 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       });
       return;
     }
+    var tipTooHigh = false;
+    if (_clientBoostLkr > 20000) {
+      tipTooHigh = true;
+      _clientBoostLkr = 20000;
+      _boostCtrl.text = '20000';
+    }
     setState(() {
       _quoting = true;
-      _quoteError = null;
+      _quoteError = tipTooHigh ? 'Tip can’t be more than LKR 20,000' : null;
     });
     try {
       final ctx = _collectContextFields();
@@ -295,7 +315,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             lon: loc.longitude,
             urgency: _urgency,
             deadlineAt: _deadlineIso(),
-            clientBoostLkr: _clientBoostLkr,
+            clientBoostLkr: _clientBoostLkr.clamp(0, 20000),
             contextFields: ctx,
           );
       if (!mounted || requestId != _quoteRequestId || category != _selectedCategory) return;
@@ -313,7 +333,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       if (!mounted || requestId != _quoteRequestId || category != _selectedCategory) return;
       setState(() {
         _quoting = false;
-        _quoteError = '$e';
+        _quoteError = humanizeError(e);
         _priceQuote = null;
       });
     }
@@ -389,14 +409,20 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       _boostCtrl.clear();
       _livePolicyWarning = null;
       _photoBytes.clear();
+      _photoSuggesting = false;
+      _photoSuggestion = null;
       _safetyBlocked = false;
       _safetyMessage = null;
       _pricingFields = const [];
       _fieldsHeadline = 'A few details for a fair price';
       _fieldsNote = '';
       final retiredControllers = [
-        ..._fieldCtrls.values, ..._itemNameCtrls, ..._itemQtyCtrls,
+        ..._fieldCtrls.values,
+        ..._itemNameCtrls,
+        ..._itemQtyCtrls,
+        ..._photoQuestionCtrls.values,
       ];
+      _photoQuestionCtrls.clear();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         for (final controller in retiredControllers) {
           controller.dispose();
@@ -408,6 +434,479 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       _fieldCtrls.clear();
       _fieldValues.clear();
     });
+  }
+
+  Future<void> _speakYourTask() async {
+    if (!await requireAuth(context, returnTo: AppRoutes.createTask)) return;
+    if (!mounted) return;
+
+    // Toggle: Stop recording when already listening.
+    if (_voiceListening || recordingListenable.value) {
+      setState(() => _voiceListening = true);
+      try {
+        final clip = await stopVoiceRecording();
+        if (!mounted) return;
+        final suggestion =
+            await context.read<TaskRepository>().suggestFromVoice(
+                  audioBytes: clip,
+                  lang: _voiceLang,
+                );
+        if (!mounted) return;
+        setState(() => _voiceListening = false);
+        await _applyVoiceOrPhotoDraft(suggestion, fromVoice: true);
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _voiceListening = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(humanizeError(e)),
+            backgroundColor: AppColors.errorColor,
+          ),
+        );
+      }
+      return;
+    }
+
+    setState(() => _voiceListening = true);
+    try {
+      await startVoiceRecording(maxDuration: const Duration(seconds: 30));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _voiceLang == 'ta'
+                ? 'Recording — speak in Tamil, then tap Stop recording'
+                : _voiceLang == 'si'
+                    ? 'Recording — speak in Sinhala, then tap Stop recording'
+                    : 'Recording — say what you need, then tap Stop recording',
+          ),
+          duration: const Duration(seconds: 8),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _voiceListening = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(humanizeError(e)),
+          backgroundColor: AppColors.errorColor,
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    }
+  }
+
+  Future<void> _applyVoiceOrPhotoDraft(
+    Map<String, dynamic> suggestion, {
+    required bool fromVoice,
+  }) async {
+    final categoryName = suggestion['category']?.toString() ?? 'other';
+    final category = TaskCategory.fromString(categoryName);
+    final title = suggestion['title']?.toString() ?? '';
+    final description = suggestion['description']?.toString() ?? '';
+    final explanation = suggestion['explanation']?.toString() ?? '';
+    final transcript = suggestion['transcript']?.toString() ?? '';
+
+    final applied = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        final bottom = MediaQuery.paddingOf(ctx).bottom;
+        return Padding(
+          padding: EdgeInsets.fromLTRB(20, 12, 20, 16 + bottom),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.borderColor,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+                const Gap(14),
+                Text(
+                  fromVoice ? 'Speak your task' : 'Show it. Get help.',
+                  style: AppTextStyles.headingMedium,
+                ),
+                const Gap(4),
+                Text(
+                  fromVoice
+                      ? 'Voice posting helps when typing is hard — including many people with disabilities.'
+                      : (explanation.isNotEmpty
+                          ? explanation
+                          : 'Review the draft, then apply.'),
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                if (fromVoice && transcript.isNotEmpty) ...[
+                  const Gap(10),
+                  Text(
+                    'Heard: “$transcript”',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ],
+                const Gap(14),
+                Text(title, style: AppTextStyles.headingSmall),
+                const Gap(6),
+                Text(description, style: AppTextStyles.bodyMedium),
+                const Gap(8),
+                Text(
+                  'Category: ${category.displayName}',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.helperAccent,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const Gap(12),
+                Row(
+                  children: [
+                    A11yReadButton(
+                      text: '$title. $description',
+                      lang: _voiceLang,
+                    ),
+                    A11ySimplifyButton(
+                      text: description,
+                      onSimplified: (plain, _) {
+                        // Update description field when applied after simplify preview.
+                        suggestion['description'] = plain;
+                      },
+                    ),
+                  ],
+                ),
+                const Gap(12),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.black,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Use this draft'),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Discard'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (applied == true && mounted) {
+      final desc = suggestion['description']?.toString() ?? description;
+      setState(() {
+        _selectedCategory = category;
+        _titleCtrl.text = title;
+        _descCtrl.text = desc;
+        _step = 1;
+      });
+      if (context.read<A11yCubit>().enabled) {
+        speakText('$title. $desc', lang: _voiceLang);
+      }
+      _loadPricingFields();
+    }
+  }
+
+  Future<void> _showItGetHelp({required bool fromCamera}) async {
+    if (!await requireAuth(context, returnTo: AppRoutes.createTask)) return;
+    if (!mounted) return;
+    try {
+      final file = await _picker.pickImage(
+        source: fromCamera ? ImageSource.camera : ImageSource.gallery,
+        imageQuality: 78,
+        maxWidth: 1600,
+      );
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      if (!mounted) return;
+      setState(() {
+        _photoSuggesting = true;
+        _photoSuggestion = null;
+      });
+      final suggestion = await context.read<TaskRepository>().suggestFromPhoto(
+            imageBytes: bytes,
+            filename: fromCamera ? 'scene_camera.jpg' : 'scene_gallery.jpg',
+          );
+      if (!mounted) return;
+      // Keep the photo as a reference attachment for helpers.
+      if (_photoBytes.length < _maxPhotos) {
+        _photoBytes.insert(0, bytes);
+        if (_photoBytes.length > _maxPhotos) {
+          _photoBytes.removeRange(_maxPhotos, _photoBytes.length);
+        }
+      }
+      for (final c in _photoQuestionCtrls.values) {
+        c.dispose();
+      }
+      _photoQuestionCtrls.clear();
+      final questions = (suggestion['questions'] as List?) ?? const [];
+      for (final q in questions) {
+        if (q is! Map) continue;
+        final id = q['id']?.toString() ?? '';
+        if (id.isEmpty) continue;
+        _photoQuestionCtrls[id] = TextEditingController();
+      }
+      setState(() {
+        _photoSuggestion = suggestion;
+        _photoSuggesting = false;
+      });
+      await _openPhotoSuggestSheet();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _photoSuggesting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: AppColors.errorColor,
+        ),
+      );
+    }
+  }
+
+  Future<void> _openPhotoSuggestSheet() async {
+    final suggestion = _photoSuggestion;
+    if (suggestion == null || !mounted) return;
+    final categoryName = suggestion['category']?.toString() ?? 'other';
+    final category = TaskCategory.fromString(categoryName);
+    final title = suggestion['title']?.toString() ?? '';
+    final description = suggestion['description']?.toString() ?? '';
+    final explanation = suggestion['explanation']?.toString() ?? '';
+    final seen = (suggestion['seen'] as List?)?.map((e) => e.toString()).toList() ??
+        const <String>[];
+    final questions = (suggestion['questions'] as List?) ?? const [];
+    final confidence = (suggestion['confidence'] as num?)?.toDouble() ?? 0;
+
+    final applied = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        final bottom = MediaQuery.paddingOf(ctx).bottom;
+        return Padding(
+          padding: EdgeInsets.fromLTRB(20, 12, 20, 16 + bottom),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.borderColor,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+                const Gap(14),
+                Text('Show it. Get help.', style: AppTextStyles.headingMedium),
+                const Gap(4),
+                Text(
+                  explanation,
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    color: AppColors.textSecondary,
+                    fontSize: 13,
+                  ),
+                ),
+                const Gap(12),
+                Row(
+                  children: [
+                    CategoryIconBadge(category, size: 44),
+                    const Gap(12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            suggestion['category_label']?.toString() ??
+                                category.displayName,
+                            style: AppTextStyles.headingSmall,
+                          ),
+                          Text(
+                            suggestion['mode'] == 'gemini'
+                                ? 'Live Gemini vision · confidence ${(confidence * 100).round()}%'
+                                : 'Demo/mock draft — not live vision',
+                            style: AppTextStyles.bodySmall.copyWith(
+                              color: suggestion['mode'] == 'gemini'
+                                  ? AppColors.helperAccent
+                                  : AppColors.warningColor,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                if (seen.isNotEmpty) ...[
+                  const Gap(12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: seen
+                        .map(
+                          (s) => Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.surfaceDark,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Text(
+                              s,
+                              style: AppTextStyles.bodySmall.copyWith(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ],
+                const Gap(14),
+                Text('Draft title', style: AppTextStyles.capsLabel),
+                const Gap(4),
+                Text(title, style: AppTextStyles.headingSmall.copyWith(fontSize: 15)),
+                const Gap(12),
+                Text('Draft description', style: AppTextStyles.capsLabel),
+                const Gap(4),
+                Text(
+                  description,
+                  style: AppTextStyles.bodyMedium.copyWith(height: 1.4),
+                ),
+                if (questions.isNotEmpty) ...[
+                  const Gap(16),
+                  Text(
+                    'A few details before you post',
+                    style: AppTextStyles.headingSmall.copyWith(fontSize: 14),
+                  ),
+                  const Gap(8),
+                  ...questions.map((raw) {
+                    if (raw is! Map) return const SizedBox.shrink();
+                    final id = raw['id']?.toString() ?? '';
+                    final prompt = raw['prompt']?.toString() ?? '';
+                    final hint = raw['hint']?.toString();
+                    final ctrl = _photoQuestionCtrls[id];
+                    if (ctrl == null || prompt.isEmpty) {
+                      return const SizedBox.shrink();
+                    }
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: TextField(
+                        controller: ctrl,
+                        decoration: InputDecoration(
+                          labelText: prompt,
+                          hintText: hint,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
+                ],
+                const Gap(8),
+                SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: FilledButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.black,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    child: const Text('Use this draft'),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Choose category manually'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (applied == true && mounted) {
+      _applyPhotoSuggestion();
+    }
+  }
+
+  void _applyPhotoSuggestion() {
+    final suggestion = _photoSuggestion;
+    if (suggestion == null) return;
+    final category = TaskCategory.fromString(
+      suggestion['category']?.toString() ?? 'other',
+    );
+    final title = suggestion['title']?.toString() ?? '';
+    var description = suggestion['description']?.toString() ?? '';
+    final answers = <String>[];
+    for (final entry in _photoQuestionCtrls.entries) {
+      final a = entry.value.text.trim();
+      if (a.isEmpty) continue;
+      String label = entry.key;
+      for (final raw in (suggestion['questions'] as List?) ?? const []) {
+        if (raw is Map && raw['id']?.toString() == entry.key) {
+          label = raw['prompt']?.toString() ?? entry.key;
+          break;
+        }
+      }
+      answers.add('$label: $a');
+    }
+    if (answers.isNotEmpty) {
+      description = '$description\n\nClient notes:\n- ${answers.join('\n- ')}';
+    }
+    setState(() {
+      _selectedCategory = category;
+      _selectedService = title;
+      _titleCtrl.text = title;
+      _descCtrl.text = description;
+      if (category == TaskCategory.groceryRun ||
+          category == TaskCategory.errandRun) {
+        if (_goodsBudget <= 0) _goodsBudget = 3000;
+        if (_itemNameCtrls.isEmpty) _addShoppingItem();
+      }
+      _step = 1;
+    });
+    _recheckPolicy();
+    Future.microtask(() {
+      if (mounted) _loadPricingFields();
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Draft ready — review and edit before posting.'),
+        backgroundColor: AppColors.successColor,
+      ),
+    );
   }
 
   Future<void> _addPhotos() async {
@@ -469,19 +968,18 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
   }
 
   void _goBack() {
-    if (_step == 0) {
+    if (_step > 0) {
+      // Stay in the wizard — previous step, never jump home.
+      setState(() => _step -= 1);
+      return;
+    }
       if (context.canPop()) {
         context.pop();
       } else {
         context.go('/');
-      }
-    } else if (_step == 1) {
-      // Going back from describe → reset to category picker & clear form
-      _resetToStart();
-    } else {
-      setState(() => _step--);
     }
   }
+
 
   Widget _buildMiniModeToggle() {
     return BlocBuilder<ModeCubit, ModeState>(
@@ -489,40 +987,48 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
         final isHelper = state is HelperMode;
         final isToggling = state is ModeToggling;
         
-        return GestureDetector(
-          onTap: isToggling ? null : () {
+        return Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(22),
+          elevation: 1,
+          shadowColor: Colors.black26,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(22),
+            onTap: isToggling
+                ? null
+                : () {
             context.read<ModeCubit>().toggleMode();
             context.go('/');
           },
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: isHelper ? AppColors.helperAccent.withOpacity(0.1) : AppColors.accent.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: isHelper ? AppColors.helperAccent : AppColors.accent,
-                width: 1.5,
-              ),
-            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  isHelper ? Icons.handshake_rounded : Icons.person_search_rounded,
-                  color: isHelper ? AppColors.helperAccent : AppColors.accent,
-                  size: 14,
-                ),
-                const Gap(4),
-                Text(
-                  isHelper ? 'HELP' : 'HIRE',
-                  style: TextStyle(
-                    color: isHelper ? AppColors.helperAccent : AppColors.accent,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.5,
+                    isHelper
+                        ? Icons.handshake_rounded
+                        : Icons.person_search_rounded,
+                    color: Colors.black,
+                    size: 16,
                   ),
-                ),
-              ],
+                  const Gap(6),
+                Text(
+                    isHelper ? 'Helper mode' : 'Client mode',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: Colors.black,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const Gap(2),
+                  const Icon(
+                    Icons.swap_horiz_rounded,
+                    size: 16,
+                    color: Colors.black54,
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -716,14 +1222,22 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       'Review & Post',
     ];
 
-    return Scaffold(
+    return PopScope(
+      canPop: _step == 0,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _goBack();
+      },
+      child: Scaffold(
       backgroundColor: AppColors.backgroundDark,
+        resizeToAvoidBottomInset: true,
       appBar: AppBar(
         backgroundColor: AppColors.backgroundDark,
         elevation: 0,
         leading: IconButton(
           icon: Icon(
-            _step == 0 ? Icons.close_rounded : Icons.arrow_back_ios_new_rounded,
+              _step == 0
+                  ? Icons.close_rounded
+                  : Icons.arrow_back_ios_new_rounded,
             color: AppColors.textSecondary,
             size: 20,
           ),
@@ -731,13 +1245,17 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
         ),
         title: Text(stepLabels[_step], style: AppTextStyles.headingSmall),
         centerTitle: true,
-        actions: _step == 0 ? [
+          actions: _step == 0
+              ? [
           Padding(
             padding: const EdgeInsets.only(right: 16),
             child: _buildMiniModeToggle(),
           ),
-        ] : null,
+                ]
+              : null,
       ),
+        // Same sticky CTA on phone + desktop — not under the shell dock.
+        bottomNavigationBar: _step > 0 ? _buildBottomBar() : null,
       body: BlocListener<TaskBloc, TaskState>(
         listener: (context, state) {
           if (state is TaskCreated) {
@@ -752,16 +1270,20 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
           if (state is TaskFailure) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text(state.message),
+                  content: Text(
+                    state.message
+                        .replaceFirst('Exception: ', '')
+                        .trim(),
+                  ),
                 backgroundColor: AppColors.errorColor,
               ),
             );
           }
         },
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 840),
-            child: Column(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 840),
+        child: Column(
           children: [
             _buildProgressBar(),
             Expanded(
@@ -772,8 +1294,8 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                 _ => _buildStep3Pricing(),
               },
             ),
-            if (_step > 0 && _step < 3) _buildBottomBar(),
           ],
+              ),
             ),
           ),
         ),
@@ -807,8 +1329,302 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
 
   // ── Step 0: Category picker ───────────────────────────────────────────────
 
+  Widget _buildShowItCard() {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 18),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.brandGreenSoft,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.photo_camera_outlined,
+                  color: AppColors.helperAccent,
+                ),
+              ),
+              const Gap(12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Show it. Get help.',
+                      style: AppTextStyles.headingSmall.copyWith(fontSize: 16),
+                    ),
+                    Text(
+                      'Photo a messy room, broken fitting or shopping list — AI drafts the task.',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: AppColors.textSecondary,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const Gap(14),
+          if (_photoSuggesting)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.accent,
+                    ),
+                  ),
+                  Gap(10),
+                  Text('Reading your photo…'),
+                ],
+              ),
+            )
+          else
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _showItGetHelp(fromCamera: true),
+                    icon: const Icon(Icons.photo_camera_outlined, size: 18),
+                    label: const Text('Camera'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+                const Gap(10),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: () => _showItGetHelp(fromCamera: false),
+                    icon: const Icon(Icons.photo_library_outlined, size: 18),
+                    label: const Text('Gallery'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.black,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          if (_photoSuggestion != null && !_photoSuggesting) ...[
+            const Gap(8),
+            TextButton(
+              onPressed: _openPhotoSuggestSheet,
+              child: const Text('Review last photo draft'),
+            ),
+          ],
+          const Gap(16),
+          const Divider(height: 1),
+          const Gap(14),
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.brandGreenSoft,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.mic_none_rounded,
+                  color: AppColors.helperAccent,
+                ),
+              ),
+              const Gap(12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Speak your task',
+                      style: AppTextStyles.headingSmall.copyWith(fontSize: 16),
+                    ),
+                    Text(
+                      'Say what you need in English, Tamil or Sinhala — built for people who find typing hard, including many with disabilities.',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: AppColors.textSecondary,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const Gap(12),
+          Wrap(
+            spacing: 8,
+            children: [
+              for (final opt in const [
+                ('en', 'English'),
+                ('ta', 'தமிழ்'),
+                ('si', 'සිංහල'),
+              ])
+                ChoiceChip(
+                  label: Text(opt.$2),
+                  selected: _voiceLang == opt.$1,
+                  onSelected: _voiceListening
+                      ? null
+                      : (_) => setState(() => _voiceLang = opt.$1),
+                ),
+            ],
+          ),
+          const Gap(10),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _speakYourTask,
+              icon: Icon(
+                _voiceListening ? Icons.stop_circle : Icons.mic_rounded,
+                size: 18,
+              ),
+              label: Text(
+                _voiceListening ? 'Stop recording' : 'Start recording',
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor: _voiceListening
+                    ? AppColors.errorColor
+                    : AppColors.helperAccent,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+          if (_voiceListening)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text(
+                'Recording… speak now, then tap Stop recording',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+          const Gap(10),
+          OutlinedButton.icon(
+            onPressed: () => showTaskBundlePlanner(
+              context,
+              initialProblem: _descCtrl.text.trim().isNotEmpty
+                  ? _descCtrl.text.trim()
+                  : _titleCtrl.text.trim(),
+              categoryHint: _selectedCategory?.name,
+            ),
+            icon: const Icon(Icons.layers_outlined, size: 18),
+            label: const Text('Split into several tasks (bundle checkout)'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.black,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+            ),
+          ),
+        ],
+      ),
+    ).animate().fadeIn(duration: 280.ms).slideY(begin: 0.04);
+  }
+
+  void _pickCategory(TaskCategory cat) {
+    setState(() => _selectedCategory = cat);
+    Future.delayed(const Duration(milliseconds: 180), () {
+      if (mounted) setState(() => _step = 1);
+    });
+  }
+
+  void _showMoreCategoriesSheet() {
+    final overflow = CategoryIcon.mobileOverflow;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.borderColor,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const Gap(14),
+                Text('More services', style: AppTextStyles.headingSmall),
+                const Gap(12),
+                GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 4,
+                    mainAxisExtent: 118,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                  ),
+                  itemCount: overflow.length,
+                  itemBuilder: (_, i) {
+                    final cat = overflow[i];
+                    return _CategoryPickTile(
+                      label: cat.displayName,
+                      index: i,
+                      icon: CategoryIconBadge(cat, size: 48),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _pickCategory(cat);
+                      },
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildStep0Category() {
-    final cats = TaskCategory.values;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final phone = constraints.maxWidth < 720;
+        final primary = CategoryIcon.mobilePrimary;
+        final cats = phone ? primary : TaskCategory.values;
+        final itemCount = phone ? primary.length + 1 : cats.length;
+
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       child: Column(
@@ -821,69 +1637,57 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
               children: [
                 Text(
                   'What kind of help\ndo you need?',
-                  style: AppTextStyles.displayMedium.copyWith(fontSize: 22),
+                      style:
+                          AppTextStyles.displayMedium.copyWith(fontSize: 22),
                 ).animate().fadeIn(duration: 300.ms).slideY(begin: -0.05),
                 const Gap(4),
                 Text(
-                  'Tap a category to get started',
+                      'Show a photo, or tap a category',
                   style: AppTextStyles.bodyMedium,
                 ).animate().fadeIn(delay: 100.ms),
               ],
             ),
           ),
+              _buildShowItCard(),
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                gridDelegate: phone
+                    ? const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 4,
+                        mainAxisExtent: 118,
+                        crossAxisSpacing: 10,
+                        mainAxisSpacing: 10,
+                      )
+                    : const SliverGridDelegateWithMaxCrossAxisExtent(
               maxCrossAxisExtent: 140,
-              mainAxisExtent: 148,
+                        mainAxisExtent: 148,
               crossAxisSpacing: 10,
               mainAxisSpacing: 10,
             ),
-            itemCount: cats.length,
+                itemCount: itemCount,
             itemBuilder: (ctx, i) {
+                  if (phone && i == primary.length) {
+                    return _CategoryPickTile(
+                      label: 'More',
+                      index: i,
+                      icon: const MoreIconBadge(size: 48),
+                      onTap: _showMoreCategoriesSheet,
+                    );
+                  }
               final cat = cats[i];
-              return GestureDetector(
-                onTap: () {
-                  setState(() => _selectedCategory = cat);
-                  Future.delayed(const Duration(milliseconds: 180),
-                      () { if (mounted) setState(() => _step = 1); });
+                  return _CategoryPickTile(
+                    label: cat.displayName,
+                    index: i,
+                    icon: CategoryIconBadge(cat, size: 48),
+                    onTap: () => _pickCategory(cat),
+                  );
                 },
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: AppColors.cardDark,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      CategoryIconBadge(cat, size: 48),
-                      const Gap(6),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 3),
-                        child: Text(
-                          cat.displayName,
-                          style: AppTextStyles.bodySmall.copyWith(
-                            color: AppColors.textPrimary,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            height: 1.2,
-                          ),
-                          textAlign: TextAlign.center,
-                          maxLines: 2,
-                        ),
                       ),
                     ],
                   ),
-                )
-                    .animate(delay: Duration(milliseconds: 20 * i))
-                    .fadeIn(duration: 220.ms)
-                    .scale(begin: const Offset(0.88, 0.88)),
               );
             },
-          ),
-        ],
-      ),
     );
   }
 
@@ -1163,24 +1967,24 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             ],
 
             if (_safetyBlocked && _safetyMessage != null) ...[
-              const Gap(16),
-              Container(
+            const Gap(16),
+            Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
                   color: AppColors.errorColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
                     color: AppColors.errorColor.withValues(alpha: 0.35),
                   ),
                 ),
-                child: Text(
+                    child: Text(
                   _safetyMessage!,
-                  style: AppTextStyles.bodySmall
+                      style: AppTextStyles.bodySmall
                       .copyWith(color: AppColors.errorColor),
-                ),
-              ),
-            ],
+                    ),
+                  ),
+                ],
           ],
         ),
       ),
@@ -1455,11 +2259,12 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
     final escrowAll = total + (_needsPurchaseTrust ? _goodsBudget : 0);
     final color = _catColor;
 
+    // Sticky Post lives in _buildBottomBar; keep light scroll padding only.
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
       child: Form(
         key: _pricingFormKey,
-        child: Column(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
@@ -1467,7 +2272,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             style: AppTextStyles.displayMedium.copyWith(fontSize: 20),
           ).animate().fadeIn(duration: 280.ms),
           const Gap(4),
-          Text(
+              Text(
             _fieldsNote.isEmpty
                 ? 'Answer what’s relevant for this job. You can accept the fair price or add a tip — not lower it.'
                 : _fieldsNote,
@@ -1499,6 +2304,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             onChanged: (v) {
               _clientBoostLkr = int.tryParse(v.trim()) ?? 0;
               if (_clientBoostLkr < 0) _clientBoostLkr = 0;
+              if (_clientBoostLkr > 20000) _clientBoostLkr = 20000;
             },
             onEditingComplete: _refreshFairQuote,
           ),
@@ -1545,17 +2351,17 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                   )
                 : Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
+            children: [
+              Text(
                         _priceQuote == null
                             ? 'Fill the details above to see your fair price'
-                            : 'Pay LKR ${total.toStringAsFixed(0)}',
+                            : 'Pay ${AppConfig.money(total)}',
                         style: AppTextStyles.headingSmall.copyWith(fontSize: 16),
                       ),
                       if (floor != null) ...[
                         const Gap(4),
                         Text(
-                          'Fair floor LKR ${floor.toStringAsFixed(0)}'
+                          'Fair floor ${AppConfig.money(floor)}'
                           '${_clientBoostLkr > 0 ? ' + tip $_clientBoostLkr' : ''}'
                           ' · helpers are protected from undercuts',
                           style: AppTextStyles.bodySmall.copyWith(
@@ -1564,41 +2370,33 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                           ),
                         ),
                       ],
-                      if (_priceQuote?['explanation'] != null) ...[
-                        const Gap(6),
-                        Text(
-                          '${_priceQuote!['explanation']}',
-                          style: AppTextStyles.bodySmall.copyWith(fontSize: 11),
-                        ),
-                      ],
+                      // Hide raw model "explanation" fluff from quote API.
                     ],
                   ),
           ),
 
           if (_needsPurchaseTrust) ...[
-            const Gap(22),
+            const Gap(18),
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
                 color: AppColors.errorColor.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(10),
                 border: Border.all(
-                  color: AppColors.errorColor.withValues(alpha: 0.35),
+                  color: AppColors.errorColor.withValues(alpha: 0.28),
                 ),
               ),
               child: Text(
-                'ZERO CASH RULE: Do not give cash to the helper. '
-                'Escrow a goods budget below. Helper pays at the till, uploads '
-                'receipt + bag photos, then is reimbursed from escrow (capped). '
-                'Seller vs helper disputes use the receipt evidence.',
+                'Zero cash: escrow the goods budget — don’t pay the helper in cash.',
                 style: AppTextStyles.bodySmall.copyWith(
                   color: AppColors.textPrimary,
-                  height: 1.4,
+                  fontWeight: FontWeight.w600,
+                  height: 1.35,
                 ),
               ),
             ),
-            const Gap(16),
+            const Gap(14),
             _FieldLabel('Goods budget (${AppConfig.currencyCode})'),
             const Gap(6),
             Row(
@@ -1713,8 +2511,11 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                     final label = f['label']?.toString() ?? id;
                     var val = ctx[id];
                     if (val is DateTime) {
-                      val =
-                          '${val.month}/${val.day} ${val.hour.toString().padLeft(2, '0')}:${val.minute.toString().padLeft(2, '0')}';
+                      val = _formatReviewDate(val);
+                    } else if (val is String &&
+                        RegExp(r'^\d{4}-\d{2}-\d{2}T').hasMatch(val)) {
+                      final parsed = DateTime.tryParse(val);
+                      val = parsed != null ? _formatReviewDate(parsed) : val;
                     } else if (val is bool) {
                       val = val ? 'Yes' : 'No';
                     }
@@ -1752,47 +2553,11 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                 const Gap(6),
                 Text(
                   _needsPurchaseTrust
-                      ? 'Goods reimbursed from escrow vs receipt. Never give cash to the helper.'
+                      ? 'Receipt unlocks goods escrow. Zero cash to helper.'
                       : '10% platform fee covers trust & secure escrow payment.',
                   style: AppTextStyles.bodySmall
                       .copyWith(color: AppColors.textMuted),
                   textAlign: TextAlign.center,
-                ),
-                const Gap(18),
-                BlocBuilder<TaskBloc, TaskState>(
-                  builder: (context, state) {
-                    final loading = state is TaskLoading;
-                    return SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: loading || _quoting || _priceQuote == null
-                            ? null
-                            : _submit,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: color,
-                          foregroundColor: Colors.white,
-                          padding:
-                              const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14)),
-                          elevation: 0,
-                        ),
-                        child: loading
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white),
-                              )
-                            : Text(
-                                'Post Task — LKR ${total.toStringAsFixed(2)}',
-                                style: AppTextStyles.buttonLabel
-                                    .copyWith(color: Colors.white, fontSize: 15),
-                              ),
-                      ),
-                    );
-                  },
                 ),
               ],
             ),
@@ -1803,34 +2568,83 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
     );
   }
 
-  // ── Bottom navigation bar (steps 1 & 2) ───────────────────────────────────
+  String _formatReviewDate(DateTime d) {
+    final local = d.toLocal();
+    final mm = local.month.toString().padLeft(2, '0');
+    final dd = local.day.toString().padLeft(2, '0');
+    final hh = local.hour.toString().padLeft(2, '0');
+    final min = local.minute.toString().padLeft(2, '0');
+    return '$dd/$mm/${local.year} $hh:$min';
+  }
+
+  // ── Sticky Continue / Post (clears phone glass dock) ───────────────────────
 
   Widget _buildBottomBar() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: AppColors.borderColor)),
-        color: AppColors.backgroundDark,
-      ),
-      child: SizedBox(
-        width: double.infinity,
-        child: ElevatedButton(
-          onPressed: _onNext,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: _catColor,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14)),
-            elevation: 0,
-          ),
-          child: Text(
-            _step == 1
-                ? 'Continue — Add Location'
-                : 'Continue — Fair price',
-            style: AppTextStyles.buttonLabel
-                .copyWith(color: Colors.white, fontSize: 14),
-          ),
+    final color = _catColor;
+    final total = (_priceQuote?['labor_lkr'] as num?)?.toDouble() ??
+        (_estimatedHours * _hourlyRate);
+    final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+
+    return Material(
+      color: AppColors.backgroundDark,
+      elevation: 10,
+      shadowColor: Colors.black26,
+      child: SafeArea(
+        top: false,
+        // Sit above keyboard when typing; otherwise normal home-indicator inset.
+        minimum: EdgeInsets.fromLTRB(20, 12, 20, keyboard > 0 ? 12 : 16),
+        child: BlocBuilder<TaskBloc, TaskState>(
+                  builder: (context, state) {
+                    final loading = state is TaskLoading;
+            final isReview = _step == 3;
+            final disabled = isReview &&
+                (loading || _quoting || _priceQuote == null);
+
+                    return SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                onPressed: disabled
+                    ? null
+                    : () {
+                        if (isReview) {
+                          _submit();
+                        } else {
+                          _onNext();
+                        }
+                      },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: color,
+                          foregroundColor: Colors.white,
+                  disabledBackgroundColor: AppColors.borderColor,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                          elevation: 0,
+                        ),
+                child: loading && isReview
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                              )
+                            : Text(
+                        isReview
+                            ? 'Post Task — ${AppConfig.money(total)}'
+                            : _step == 1
+                                ? 'Continue — Add Location'
+                                : 'Continue — Fair price',
+                        style: AppTextStyles.buttonLabel.copyWith(
+                          color: Colors.white,
+                          fontSize: 14,
+                        ),
+                              ),
+                      ),
+                    );
+                  },
         ),
       ),
     );
@@ -1907,5 +2721,51 @@ class _ReviewRow extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _CategoryPickTile extends StatelessWidget {
+  const _CategoryPickTile({
+    required this.label,
+    required this.index,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String label;
+  final int index;
+  final Widget icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          icon,
+          const Gap(6),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: Text(
+              label,
+              style: AppTextStyles.bodySmall.copyWith(
+                color: AppColors.textPrimary,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                height: 1.2,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    )
+        .animate(delay: Duration(milliseconds: 20 * index))
+        .fadeIn(duration: 220.ms)
+        .scale(begin: const Offset(0.88, 0.88));
   }
 }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:hyperlocal/core/services/gcp/gcp_api_client.dart';
 import 'package:hyperlocal/core/services/gcp/subscription_handle.dart';
@@ -193,6 +194,17 @@ class TaskRepository {
     return _api.postJson('/tasks/$taskId/match', {});
   }
 
+  /// Client hires a recommended helper from Explain-my-match.
+  Future<Task> assignHelper({
+    required String taskId,
+    required String helperId,
+  }) async {
+    final data = await _api.postJson('/tasks/$taskId/assign', {
+      'helper_id': helperId,
+    });
+    return Task.fromJson(Map<String, dynamic>.from(data['task'] as Map));
+  }
+
   Future<Map<String, dynamic>> reconcileReceipt({
     required String taskId,
     required String shoppingList,
@@ -254,6 +266,12 @@ class TaskRepository {
     if (task.photoPaths.isNotEmpty) {
       payload['photo_paths'] = task.photoPaths;
     }
+    if (task.bookedForUserId != null && task.bookedForUserId!.isNotEmpty) {
+      payload['booked_for_user_id'] = task.bookedForUserId;
+    }
+    if (task.bookedForName != null && task.bookedForName!.trim().isNotEmpty) {
+      payload['booked_for_name'] = task.bookedForName!.trim();
+    }
 
     final data = await _api.postJson('/tasks', payload);
 
@@ -271,6 +289,158 @@ class TaskRepository {
     String filename = 'photo.jpg',
   }) {
     return _api.uploadTaskPhoto(bytes: bytes, filename: filename);
+  }
+
+  /// Show it. Get help. — photo → category + draft + confirm questions.
+  Future<Map<String, dynamic>> suggestFromPhoto({
+    required List<int> imageBytes,
+    String filename = 'scene.jpg',
+    String? hint,
+  }) {
+    return _api.postMultipart(
+      '/tasks/suggest-from-photo',
+      fields: {
+        if (hint != null && hint.trim().isNotEmpty) 'hint': hint.trim(),
+      },
+      fileBytes: imageBytes,
+      fileField: 'photo',
+      filename: filename,
+    );
+  }
+
+  /// Speak your task — audio → draft (accessibility: voice instead of typing).
+  Future<Map<String, dynamic>> suggestFromVoice({
+    List<int>? audioBytes,
+    String lang = 'en',
+    String filename = 'clip.webm',
+    String contentType = 'audio/webm',
+  }) {
+    return _api.postMultipart(
+      '/tasks/suggest-from-voice',
+      fields: {'lang': lang},
+      fileBytes: audioBytes,
+      fileField: 'audio',
+      filename: filename,
+      contentType: contentType,
+    );
+  }
+
+  /// One problem → several related task drafts.
+  Future<Map<String, dynamic>> planTaskBundle({
+    required String problem,
+    String? categoryHint,
+  }) {
+    return _api.postJson('/tasks/plan', {
+      'problem': problem,
+      if (categoryHint != null && categoryHint.isNotEmpty)
+        'category_hint': categoryHint,
+    });
+  }
+
+  /// Checkout selected planned tasks as one escrow bundle.
+  Future<Map<String, dynamic>> checkoutTaskBundle({
+    required String bundleTitle,
+    required double lat,
+    required double lon,
+    required String deadlineAt,
+    required List<Map<String, dynamic>> tasks,
+    String? locationLabel,
+    String? bookedForUserId,
+    String? bookedForName,
+  }) {
+    return _api.postJson('/tasks/bundle', {
+      'bundle_title': bundleTitle,
+      'lat': lat,
+      'lon': lon,
+      'deadline_at': deadlineAt,
+      'tasks': tasks,
+      if (locationLabel != null) 'location_label': locationLabel,
+      if (bookedForUserId != null) 'booked_for_user_id': bookedForUserId,
+      if (bookedForName != null) 'booked_for_name': bookedForName,
+    });
+  }
+
+  Future<Map<String, dynamic>> shareTaskLive(String taskId) {
+    return _api.postJson('/tasks/$taskId/share', {});
+  }
+
+  Future<Map<String, dynamic>> watchTask(String taskId) {
+    return _api.postJson('/tasks/$taskId/watch', {});
+  }
+
+  Future<Map<String, dynamic>> getSharedLive(String token) {
+    return _api.getJson('/shared/$token', auth: false);
+  }
+
+  Future<List<Task>> listWatching() async {
+    final data = await _api.getJson('/me/watching');
+    final list = data['tasks'] as List? ?? [];
+    return list
+        .map((e) => Task.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> a11yDescribe({
+    List<int>? imageBytes,
+    String hint = 'Zivo app screen',
+    String lang = 'en',
+  }) {
+    return _api.postMultipart(
+      '/a11y/describe',
+      fields: {'hint': hint, 'lang': lang},
+      fileBytes: imageBytes,
+      fileField: 'image',
+      filename: 'scene.jpg',
+    );
+  }
+
+  Future<Map<String, dynamic>> a11ySimplify(String text, {String lang = 'en'}) {
+    return _api.postJson('/a11y/simplify', {'text': text, 'lang': lang});
+  }
+
+  Future<Map<String, dynamic>> a11yTranscribe({
+    List<int>? audioBytes,
+    String lang = 'en',
+  }) {
+    return _api.postMultipart(
+      '/a11y/transcribe',
+      fields: {'lang': lang},
+      fileBytes: audioBytes,
+      fileField: 'audio',
+      filename: 'clip.webm',
+      contentType: 'audio/webm',
+    );
+  }
+
+  Future<Map<String, dynamic>> submitCompletionProof({
+    required String taskId,
+    required List<String> checkedItems,
+    List<List<int>> photoBytes = const [],
+    String? note,
+    double? receiptTotalLkr,
+    String? shoppingList,
+  }) {
+    final extras =
+        <({List<int> bytes, String field, String filename, String? contentType})>[];
+    for (var i = 0; i < photoBytes.length && i < 3; i++) {
+      extras.add((
+        bytes: photoBytes[i],
+        field: 'photos',
+        filename: 'proof_$i.jpg',
+        contentType: 'image/jpeg',
+      ));
+    }
+    return _api.postMultipart(
+      '/tasks/$taskId/completion-proof',
+      fields: {
+        'checked_items': jsonEncode(checkedItems),
+        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+        if (receiptTotalLkr != null) 'receipt_total_lkr': '$receiptTotalLkr',
+        if (shoppingList != null && shoppingList.trim().isNotEmpty)
+          'shopping_list': shoppingList.trim(),
+      },
+      extraFiles: extras,
+    );
   }
 
   Future<List<Task>> getClientTasks(String clientId) async {
@@ -367,17 +537,24 @@ class TaskRepository {
     String? storeName,
     double? receiptTotalHint,
   }) async {
-    final result = await reconcileReceipt(
+    final photos =
+        receiptImageBytes != null ? <List<int>>[receiptImageBytes] : <List<int>>[];
+    final result = await submitCompletionProof(
       taskId: taskId,
+      checkedItems: const [
+        'Till receipt photo',
+        'Bag / goods photo',
+        'Items match the shopping list',
+      ],
+      photoBytes: photos,
+      note: storeName,
+      receiptTotalLkr: receiptTotalHint,
       shoppingList: shoppingList,
-      imageBytes: receiptImageBytes,
-      budgetLkr: budgetLkr,
     );
     return {
       ...result,
-      if (receiptTotalHint != null) 'receipt_total_hint': receiptTotalHint,
+      if (budgetLkr != null) 'budget_lkr': budgetLkr,
       'store_name': storeName,
-      'proof_submitted_at': DateTime.now().toUtc().toIso8601String(),
     };
   }
 
@@ -391,6 +568,13 @@ class TaskRepository {
     required String taskId,
     required String reason,
   }) async {
+    final res = await _api.postJson('/tasks/$taskId/dispute', {
+      'reason': reason,
+    });
+    final raw = res['task'];
+    if (raw is Map) {
+      return Task.fromJson(Map<String, dynamic>.from(raw));
+    }
     final task = await getTaskById(taskId);
     if (task == null) throw Exception('Task not found');
     return task.copyWith(status: TaskStatus.disputed, disputeReason: reason);

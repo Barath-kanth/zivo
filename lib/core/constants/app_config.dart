@@ -97,7 +97,8 @@ abstract class AppConfig {
   static bool get freeOtpAllowed =>
       !pilotMode && forceFreeOtp && (kDebugMode || !kReleaseMode);
 
-  static String money(num amount, {int decimals = 0}) {
+  /// Uber-style money: `LKR 8028.00` (always two decimals by default).
+  static String money(num amount, {int decimals = 2}) {
     return '$currencyCode ${amount.toStringAsFixed(decimals)}';
   }
 }

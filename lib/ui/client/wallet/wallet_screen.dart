@@ -139,7 +139,7 @@ class _WalletScreenState extends State<WalletScreen> {
             ),
             const Gap(10),
             Text(
-              'LKR ${wallet.toStringAsFixed(2)}',
+              AppConfig.money(wallet),
               style: const TextStyle(
                 fontFamily: 'Inter',
                 fontSize: 36,
@@ -154,7 +154,7 @@ class _WalletScreenState extends State<WalletScreen> {
                 _MiniStat(
                   icon: Icons.lock_clock_rounded,
                   label: 'In Escrow',
-                   value: 'LKR ${escrow.toStringAsFixed(2)}',
+                   value: AppConfig.money(escrow),
                   color: AppColors.statusMatched,
                 ),
                 Container(
@@ -165,7 +165,7 @@ class _WalletScreenState extends State<WalletScreen> {
                 _MiniStat(
                   icon: Icons.savings_rounded,
                   label: 'Helper Earned',
-                   value: 'LKR ${earnings.toStringAsFixed(2)}',
+                   value: AppConfig.money(earnings),
                   color: AppColors.helperAccent,
                 ),
               ],
@@ -387,7 +387,7 @@ class _WalletScreenState extends State<WalletScreen> {
                                     AppColors.accent.withValues(alpha: 0.4)),
                           ),
                           child: Text(
-                            AppConfig.money(amt, decimals: 0),
+                            AppConfig.money(amt),
                             style: AppTextStyles.headingSmall
                                 .copyWith(color: AppColors.accent),
                           ),
@@ -551,7 +551,7 @@ class _LedgerTile extends StatelessWidget {
             ),
           ),
           Text(
-            '${isCredit ? '+' : '-'}LKR ${entry.amount.toStringAsFixed(2)}',
+            '${isCredit ? '+' : '-'}${AppConfig.money(entry.amount)}',
             style:
                 AppTextStyles.headingSmall.copyWith(color: color, fontSize: 13),
           ),

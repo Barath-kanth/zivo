@@ -36,6 +36,8 @@ web-host/build/
 gcp/api/node_modules/
 gcp/api/dist/
 gcp/api/.env
+.gcloud-tmp/
+.flutter-sdk/
 
 
 # Symbolication related

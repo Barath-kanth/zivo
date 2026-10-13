@@ -8,6 +8,7 @@ import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/data/repositories/task_repository.dart';
+import 'package:hyperlocal/ui/_shared/a11y_widgets.dart';
 
 /// Persisted in-app chat between client and assigned helper for one task.
 class TaskChatScreen extends StatefulWidget {
@@ -230,6 +231,22 @@ class _TaskChatScreenState extends State<TaskChatScreen> {
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
               child: Row(
                 children: [
+                  IconButton(
+                    tooltip: 'Caption from voice (deaf / hard-of-hearing)',
+                    onPressed: (_sending || _readOnly)
+                        ? null
+                        : () async {
+                            final caption = await captureA11yCaption(context);
+                            if (!mounted || caption == null || caption.isEmpty) {
+                              return;
+                            }
+                            setState(() {
+                              _input.text = 'Caption: $caption';
+                            });
+                            await _send();
+                          },
+                    icon: const Icon(Icons.closed_caption_outlined),
+                  ),
                   Expanded(
                     child: TextField(
                       controller: _input,

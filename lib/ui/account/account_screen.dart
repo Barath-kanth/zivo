@@ -3,8 +3,11 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
+import 'package:hyperlocal/blocs/a11y/a11y_cubit.dart';
 import 'package:hyperlocal/blocs/mode/mode_cubit.dart';
 import 'package:hyperlocal/core/constants/app_brand.dart';
+import 'package:hyperlocal/ui/_shared/a11y_widgets.dart';
+import 'package:hyperlocal/ui/_shared/task_bundle_sheet.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
 import 'package:hyperlocal/core/constants/app_config.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
@@ -134,6 +137,10 @@ class _AccountScreenState extends State<AccountScreen> {
                           _quickActions(isHelper),
                           const Gap(14),
                           _multiAccountCard(p),
+                          const Gap(14),
+                          _familyAssistCard(p),
+                          const Gap(14),
+                          _a11yCard(),
                           const Gap(14),
                           _menuCard(p, isHelper),
                           const Gap(14),
@@ -467,6 +474,128 @@ class _AccountScreenState extends State<AccountScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _familyAssistCard(UserProfile current) {
+    final others = _deviceAccounts.where((a) => a.id != current.id).toList();
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.family_restroom_outlined, size: 22),
+                const Gap(8),
+                Text(
+                  'Family Assist',
+                  style: AppTextStyles.headingSmall.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const Gap(6),
+            Text(
+              'Book help for a parent or relative, then share a live link so family can see when a helper is coming — without OTP codes.',
+              style: AppTextStyles.bodySmall.copyWith(
+                color: AppColors.textMuted,
+                height: 1.35,
+              ),
+            ),
+            const Gap(12),
+            if (others.isEmpty)
+              Text(
+                'Add another profile on this phone first (Accounts above), then book for them here.',
+                style: AppTextStyles.bodySmall,
+              )
+            else
+              ...others.map(
+                (a) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: OutlinedButton.icon(
+                    onPressed: () => showTaskBundlePlanner(
+                      context,
+                      initialProblem:
+                          'Help for ${a.fullName} — grocery or errand nearby',
+                      bookedForName: a.fullName,
+                      bookedForUserId: a.id,
+                    ),
+                    icon: const Icon(Icons.event_available_outlined, size: 18),
+                    label: Text('Book for ${a.fullName}'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.black,
+                      minimumSize: const Size.fromHeight(44),
+                    ),
+                  ),
+                ),
+              ),
+            TextButton.icon(
+              onPressed: () => showTaskBundlePlanner(
+                context,
+                initialProblem:
+                    'Moving / packing / cleaning this weekend for my family',
+              ),
+              icon: const Icon(Icons.layers_outlined, size: 18),
+              label: const Text('Split one problem into several tasks'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _a11yCard() {
+    return BlocBuilder<A11yCubit, bool>(
+      builder: (context, on) {
+        return Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: on,
+                  onChanged: (v) => context.read<A11yCubit>().setEnabled(v),
+                  title: Text(
+                    'Accessibility Mode',
+                    style: AppTextStyles.headingSmall.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  subtitle: Text(
+                    'Opt-in. When on, use the Access button (mobile) or Accessibility in the sidebar (desktop) for Speak & Describe — no top banner.',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: AppColors.textMuted,
+                      height: 1.35,
+                    ),
+                  ),
+                  activeThumbColor: Colors.white,
+                  activeTrackColor: AppColors.helperAccent,
+                ),
+                if (on) ...[
+                  const Gap(4),
+                  TextButton.icon(
+                    onPressed: () => showA11yDescribeSheet(
+                      context,
+                      hint: 'Zivo Account screen — accessibility settings',
+                    ),
+                    icon: const Icon(Icons.visibility_outlined, size: 18),
+                    label: const Text('Describe this screen'),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

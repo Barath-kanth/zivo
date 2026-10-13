@@ -2,9 +2,54 @@ import 'dotenv/config';
 import cors from 'cors';
 import express from 'express';
 import multer from 'multer';
-import { z } from 'zod';
+import { z, ZodError } from 'zod';
+
+/** Never return Zod JSON dumps to mobile — short human copy only. */
+function friendlyError(e: unknown, fallback: string): string {
+  if (e instanceof ZodError) {
+    const parts = e.issues.map((i) => {
+      const path = i.path.join('.');
+      if (path.includes('client_boost')) {
+        return 'Tip can’t be more than LKR 20,000';
+      }
+      if (path.includes('goods_budget')) {
+        return 'Goods budget is too high — try a smaller amount';
+      }
+      if (path.includes('description')) {
+        return i.message || 'Please add a clearer task description';
+      }
+      if (path.includes('travel_km')) {
+        return 'Travel distance looks too far for this task';
+      }
+      if (i.code === 'too_big') {
+        return path
+          ? `${path.replace(/_/g, ' ')} is too high`
+          : 'That value is too high';
+      }
+      return i.message;
+    });
+    return parts.filter(Boolean).join('. ') || fallback;
+  }
+  if (e instanceof Error && e.message.trim()) {
+    // ZodError.message is a JSON dump — never forward it to clients.
+    if (e.message.includes('"code":') || e.message.trim().startsWith('[')) {
+      return fallback;
+    }
+    return e.message;
+  }
+  return fallback;
+}
 import { checkTaskSafety } from './pillars/safety.js';
 import { reconcileReceipt } from './pillars/receipt.js';
+import { suggestFromPhoto } from './pillars/photo_suggest.js';
+import { suggestFromVoice } from './pillars/voice_suggest.js';
+import {
+  describeScene,
+  simplifyText,
+  transcribeVoice,
+} from './pillars/a11y.js';
+import { planTaskBundle } from './pillars/task_plan.js';
+import { sniffImageMime } from './image_mime.js';
 import { matchHelpers } from './pillars/match.js';
 import { instantDispatch } from './pillars/dispatch.js';
 import { quoteMicroPrice } from './pillars/pricing.js';
@@ -22,15 +67,20 @@ import {
 } from './pillars/vouch.js';
 import {
   acceptTask,
+  attachMatchExplanation,
   appendSystemChatMessage,
   completeTask,
   startTask,
   createSession,
   createTask,
+  createTaskBundle,
   dbMode,
+  enableTaskShare,
+  getSharedLive,
   getTask,
   getUser,
   issuePhoneOtp,
+  listBundleTasks,
   listClientTasks,
   listHelperActiveTasks,
   listLedger,
@@ -39,6 +89,8 @@ import {
   listTaskChat,
   listTrustReviews,
   listUsers,
+  listWatchingTasks,
+  openTaskDispute,
   publicProfile,
   seedDemo,
   sendTaskChatMessage,
@@ -46,10 +98,12 @@ import {
   setHelperPresence,
   signInEmail,
   signUpEmail,
+  submitCompletionProof,
   topUp,
   userIdFromAuthHeader,
   upsertUser,
   verifyPhoneOtp,
+  watchTask,
   PLATFORM_FEE_PERCENT,
 } from './store.js';
 import {
@@ -320,6 +374,121 @@ app.post('/uploads/photo', upload.single('photo'), async (req, res) => {
   }
 });
 
+/** A11y — describe screenshot / camera scene for blind & low-vision. */
+app.post('/a11y/describe', upload.single('image'), async (req, res) => {
+  try {
+    await requireUser(req);
+    const hint = typeof req.body?.hint === 'string' ? req.body.hint : undefined;
+    const lang = typeof req.body?.lang === 'string' ? req.body.lang : 'en';
+    const result = await describeScene({
+      imageBytes: req.file?.buffer,
+      mimeType: req.file?.buffer?.length
+        ? sniffImageMime(req.file.buffer, req.file.mimetype)
+        : undefined,
+      hint,
+      lang,
+    });
+    res.json(result);
+  } catch (e) {
+    res.status(502).json({
+      error: e instanceof Error ? e.message : 'Describe failed',
+    });
+  }
+});
+
+/** A11y — plain language for cognitive accessibility. */
+app.post('/a11y/simplify', async (req, res) => {
+  try {
+    await requireUser(req);
+    const body = z
+      .object({
+        text: z.string().trim().min(8).max(4000),
+        lang: z.string().optional(),
+      })
+      .parse(req.body ?? {});
+    res.json(await simplifyText(body));
+  } catch (e) {
+    res.status(400).json({
+      error: friendlyError(e, 'Could not simplify'),
+    });
+  }
+});
+
+/** A11y — voice → caption for deaf / hard-of-hearing chat. */
+app.post('/a11y/transcribe', upload.single('audio'), async (req, res) => {
+  try {
+    await requireUser(req);
+    const langRaw = String(req.body?.lang ?? 'en');
+    const lang =
+      langRaw === 'ta' || langRaw === 'si' ? (langRaw as 'ta' | 'si') : 'en';
+    res.json(
+      await transcribeVoice({
+        audioBytes: req.file?.buffer,
+        mimeType: req.file?.mimetype,
+        lang,
+      }),
+    );
+  } catch (e) {
+    res.status(502).json({
+      error: e instanceof Error ? e.message : 'Transcribe failed',
+    });
+  }
+});
+
+/** Speak your task — audio → category + draft (accessibility: voice instead of typing). */
+app.post('/tasks/suggest-from-voice', upload.single('audio'), async (req, res) => {
+  try {
+    await requireUser(req);
+    const langRaw = String(req.body?.lang ?? req.query.lang ?? 'en');
+    const lang =
+      langRaw === 'ta' || langRaw === 'si' ? (langRaw as 'ta' | 'si') : 'en';
+    // Mock path can run without audio; live Vertex needs bytes.
+    const result = await suggestFromVoice({
+      audioBytes: req.file?.buffer,
+      mimeType: req.file?.mimetype,
+      lang,
+    });
+    res.json(result);
+  } catch (e) {
+    console.error('[suggest-from-voice] failed', e);
+    res.status(502).json({
+      error: e instanceof Error ? e.message : 'Voice suggest failed',
+    });
+  }
+});
+
+/** Show it. Get help. — photo → category + draft task + confirm questions. */
+app.post('/tasks/suggest-from-photo', upload.single('photo'), async (req, res) => {
+  try {
+    await requireUser(req);
+    if (!req.file?.buffer?.length) {
+      return res.status(400).json({ error: 'photo file required' });
+    }
+    console.log('[suggest-from-photo]', {
+      bytes: req.file.buffer.length,
+      mime: req.file.mimetype,
+      mock: process.env.USE_MOCK_AI,
+    });
+    const hint = typeof req.body?.hint === 'string' ? req.body.hint : undefined;
+    const mimeType = sniffImageMime(req.file.buffer, req.file.mimetype);
+    console.log('[suggest-from-photo] mime', { declared: req.file.mimetype, sniffed: mimeType });
+    const result = await suggestFromPhoto({
+      imageBytes: req.file.buffer,
+      mimeType,
+      hint,
+    });
+    console.log('[suggest-from-photo] ok', {
+      mode: result.mode,
+      category: result.category,
+      confidence: result.confidence,
+    });
+    res.json(result);
+  } catch (e) {
+    console.error('[suggest-from-photo] failed', e);
+    res.status(502).json({ error: e instanceof Error ? e.message : 'Suggest failed' });
+  }
+});
+
 app.post('/tasks/safety-check', async (req, res) => {
   const body = z
     .object({
@@ -371,7 +540,7 @@ app.post('/tasks/price-quote', async (req, res) => {
       .parse(req.body);
     res.json(await quoteMicroPrice(body));
   } catch (e) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'Quote failed' });
+    res.status(400).json({ error: friendlyError(e, 'Couldn’t get a fair price') });
   }
 });
 
@@ -453,7 +622,12 @@ app.post('/batches/join', async (req, res) => {
       description: body.description,
     });
     if (!safety.allowed) {
-      return res.status(422).json({ error: 'Blocked by safety policy', safety });
+      return res.status(422).json({
+        error:
+          safety.reasoning ||
+          safety.reasons?.[0] ||
+          'This request doesn’t meet community safety guidelines',
+      });
     }
 
     const result = await joinStreetBatch({
@@ -514,7 +688,12 @@ app.post('/tasks/dispatch', async (req, res) => {
       description: body.description,
     });
     if (!safety.allowed) {
-      return res.status(422).json({ error: 'Blocked by safety policy', safety });
+      return res.status(422).json({
+        error:
+          safety.reasoning ||
+          safety.reasons?.[0] ||
+          'This request doesn’t meet community safety guidelines',
+      });
     }
 
     const result = await instantDispatch({
@@ -582,6 +761,8 @@ app.post('/tasks', async (req, res) => {
         location_label: z.string().nullish(),
         photo_urls: z.array(z.string().min(8)).max(5).nullish(),
         photo_paths: z.array(z.string().min(3)).max(5).nullish(),
+        booked_for_user_id: z.string().min(1).optional(),
+        booked_for_name: z.string().min(1).max(80).optional(),
       })
       .parse(req.body);
 
@@ -656,6 +837,8 @@ app.post('/tasks', async (req, res) => {
       deadline_at: deadlineAt,
       difficulty: pricing.difficulty,
       physical_effort: pricing.physical_effort,
+      booked_for_user_id: body.booked_for_user_id,
+      booked_for_name: body.booked_for_name,
     });
     // Do not expose internal safety/RAG payload to clients.
     res.status(201).json({
@@ -672,7 +855,158 @@ app.post('/tasks', async (req, res) => {
       },
     });
   } catch (e) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'Create failed' });
+    res.status(400).json({ error: friendlyError(e, 'Couldn’t post this task') });
+  }
+});
+
+/** One problem → several related task drafts (Gemini). */
+app.post('/tasks/plan', async (req, res) => {
+  try {
+    await requireUser(req);
+    const body = z
+      .object({
+        problem: z.string().min(12).max(1200),
+        category_hint: z.string().optional(),
+        lang: z.string().optional(),
+      })
+      .parse(req.body);
+    res.json(await planTaskBundle(body));
+  } catch (e) {
+    res.status(400).json({ error: friendlyError(e, 'Couldn’t plan related tasks') });
+  }
+});
+
+/** Bundle checkout — post selected planned tasks with one escrow hold. */
+app.post('/tasks/bundle', async (req, res) => {
+  try {
+    const userId = await requireUser(req);
+    const body = z
+      .object({
+        bundle_title: z.string().min(1).max(80),
+        lat: z.number(),
+        lon: z.number(),
+        location_address: z.string().nullish(),
+        location_label: z.string().nullish(),
+        deadline_at: z.string().min(8),
+        booked_for_user_id: z.string().min(1).optional(),
+        booked_for_name: z.string().min(1).max(80).optional(),
+        tasks: z
+          .array(
+            z.object({
+              title: z.string().min(1),
+              description: z.string().min(20),
+              category: z.string().min(1),
+              estimated_hours: z.number().positive().max(6),
+              goods_budget: z.number().nonnegative().max(50000).default(0),
+            }),
+          )
+          .min(1)
+          .max(6),
+      })
+      .parse(req.body);
+
+    const priced = [];
+    for (const t of body.tasks) {
+      const safety = await checkTaskSafety({
+        title: t.title,
+        description: t.description,
+      });
+      if (!safety.allowed) {
+        return res.status(422).json({
+          error: safety.reasoning || `Blocked: ${t.title}`,
+        });
+      }
+      const pricing = await quoteMicroPrice({
+        title: t.title,
+        description: t.description,
+        category: t.category,
+        lat: body.lat,
+        lon: body.lon,
+        duration_minutes: Math.round(t.estimated_hours * 60),
+        urgency: 'normal',
+        deadline_at: body.deadline_at,
+      });
+      const labor = pricing.labor_lkr;
+      const hours = Math.max(0.25, pricing.duration_hours);
+      priced.push({
+        title: t.title,
+        description:
+          t.description +
+          `\n\n[Bundle fair price LKR ${labor} · deadline ${body.deadline_at}]`,
+        category: t.category,
+        estimated_hours: hours,
+        hourly_rate: Math.round(labor / hours),
+        goods_budget: t.goods_budget,
+      });
+    }
+
+    const result = await createTaskBundle({
+      client_id: userId,
+      bundle_title: body.bundle_title,
+      lat: body.lat,
+      lon: body.lon,
+      location_address: body.location_address ?? undefined,
+      location_label: body.location_label ?? undefined,
+      deadline_at: body.deadline_at,
+      booked_for_user_id: body.booked_for_user_id,
+      booked_for_name: body.booked_for_name,
+      tasks: priced,
+    });
+    res.status(201).json(result);
+  } catch (e) {
+    res.status(400).json({ error: friendlyError(e, 'Couldn’t checkout bundle') });
+  }
+});
+
+app.get('/tasks/bundle/:bundleId', async (req, res) => {
+  try {
+    await requireUser(req);
+    res.json({ tasks: await listBundleTasks(req.params.bundleId) });
+  } catch (e) {
+    res.status(400).json({ error: friendlyError(e, 'Bundle not found') });
+  }
+});
+
+/** Family Assist — create / refresh shared live link. */
+app.post('/tasks/:id/share', async (req, res) => {
+  try {
+    const userId = await requireUser(req);
+    const result = await enableTaskShare(req.params.id, userId);
+    res.json({
+      share_token: result.share_token,
+      share_path: `/shared/${result.share_token}`,
+      task: result.task,
+    });
+  } catch (e) {
+    res.status(400).json({ error: friendlyError(e, 'Couldn’t share live updates') });
+  }
+});
+
+app.post('/tasks/:id/watch', async (req, res) => {
+  try {
+    const userId = await requireUser(req);
+    const task = await watchTask(req.params.id, userId);
+    res.json({ task });
+  } catch (e) {
+    res.status(400).json({ error: friendlyError(e, 'Couldn’t watch this request') });
+  }
+});
+
+app.get('/me/watching', async (req, res) => {
+  try {
+    const id = await requireUser(req);
+    res.json({ tasks: await listWatchingTasks(id) });
+  } catch (e) {
+    res.status(401).json({ error: e instanceof Error ? e.message : 'Unauthorized' });
+  }
+});
+
+/** Public family live board (no OTP secrets). */
+app.get('/shared/:token', async (req, res) => {
+  try {
+    res.json(await getSharedLive(req.params.token));
+  } catch (e) {
+    res.status(404).json({ error: friendlyError(e, 'Shared link not found') });
   }
 });
 
@@ -697,7 +1031,8 @@ app.get('/tasks/helper/active', async (req, res) => {
 app.get('/tasks/open', async (req, res) => {
   const lat = Number(req.query.lat ?? 6.9271);
   const lng = Number(req.query.lng ?? 79.8612);
-  res.json({ tasks: await listOpenTasks(lat, lng) });
+  const viewerId = await userIdFromAuthHeader(req.header('authorization') ?? undefined);
+  res.json({ tasks: await listOpenTasks(lat, lng, viewerId ?? undefined) });
 });
 
 app.get('/tasks/:id', async (req, res) => {
@@ -709,10 +1044,59 @@ app.get('/tasks/:id', async (req, res) => {
 app.post('/tasks/:id/accept', async (req, res) => {
   try {
     const helperId = await requireUser(req);
-    const task = await acceptTask(String(req.params.id), helperId);
+    let task = await acceptTask(String(req.params.id), helperId);
+    try {
+      const ranking = await matchHelpers(task);
+      const me = ranking.candidates.find((c) => c.helperId === helperId);
+      const reasons = me?.reasons ?? [];
+      const explanation = me
+        ? `${me.name} accepted your task. Why they fit: ${reasons.join(' · ') || ranking.explanation}`
+        : ranking.explanation;
+      task = await attachMatchExplanation(task, {
+        explanation,
+        reasons,
+        mode: ranking.mode,
+      });
+    } catch {
+      /* explanation is best-effort */
+    }
     res.json({ task });
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'Accept failed' });
+  }
+});
+
+/** Client picks a recommended helper (Explain-my-match hire). */
+app.post('/tasks/:id/assign', async (req, res) => {
+  try {
+    const clientId = await requireUser(req);
+    const body = z.object({ helper_id: z.string().min(1) }).parse(req.body);
+    const existing = await getTask(String(req.params.id));
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    if (existing.client_id !== clientId) {
+      return res.status(403).json({ error: 'Only the task owner can assign a helper' });
+    }
+    if (existing.client_id === body.helper_id) {
+      return res.status(400).json({ error: 'Cannot assign yourself as helper' });
+    }
+    let task = await acceptTask(String(req.params.id), body.helper_id);
+    try {
+      const ranking = await matchHelpers(task);
+      const me = ranking.candidates.find((c) => c.helperId === body.helper_id);
+      const reasons = me?.reasons ?? [];
+      task = await attachMatchExplanation(task, {
+        explanation: me
+          ? `You hired ${me.name}. ${reasons.join(' · ') || ranking.explanation}`
+          : ranking.explanation,
+        reasons,
+        mode: ranking.mode,
+      });
+    } catch {
+      /* best-effort */
+    }
+    res.json({ task });
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'Assign failed' });
   }
 });
 
@@ -785,6 +1169,28 @@ app.post('/tasks/:id/chat', async (req, res) => {
   }
 });
 
+/** Client or helper opens a dispute — freezes escrow, marks task disputed. */
+app.post('/tasks/:id/dispute', async (req, res) => {
+  try {
+    const userId = await requireUser(req);
+    const body = z
+      .object({
+        reason: z.string().trim().min(8).max(500),
+      })
+      .parse(req.body ?? {});
+    const task = await openTaskDispute({
+      taskId: String(req.params.id),
+      userId,
+      reason: body.reason,
+    });
+    res.json({ task, trust_hold: true });
+  } catch (e) {
+    const msg = friendlyError(e, 'Could not open dispute');
+    const code = msg.includes('Only the client') ? 403 : 400;
+    res.status(code).json({ error: msg });
+  }
+});
+
 /** Cup-unique: Gemini Trust Arbitrator over chat + timeline + vouch (+ receipt note). */
 app.post('/tasks/:id/trust-review', async (req, res) => {
   try {
@@ -843,6 +1249,104 @@ app.post('/tasks/:id/start', async (req, res) => {
     res.status(400).json({ error: e instanceof Error ? e.message : 'Start failed' });
   }
 });
+
+/** Helper submits completion proof (checklist + photos). Grocery may also run receipt AI. */
+app.post(
+  '/tasks/:id/completion-proof',
+  upload.array('photos', 3),
+  async (req, res) => {
+    try {
+      const helperId = await requireUser(req);
+      const taskId = String(req.params.id);
+      const task = await getTask(taskId);
+      if (!task) return res.status(404).json({ error: 'Not found' });
+
+      let checked: string[] = [];
+      const rawChecked = req.body?.checked_items ?? req.body?.checkedItems;
+      if (typeof rawChecked === 'string') {
+        try {
+          const parsed = JSON.parse(rawChecked);
+          if (Array.isArray(parsed)) checked = parsed.map(String);
+          else checked = rawChecked.split('|').map((s: string) => s.trim());
+        } catch {
+          checked = rawChecked.split('|').map((s: string) => s.trim());
+        }
+      } else if (Array.isArray(rawChecked)) {
+        checked = rawChecked.map(String);
+      }
+
+      const note =
+        typeof req.body?.note === 'string' ? req.body.note : undefined;
+      const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+      const photoUrls: string[] = [];
+      const photoPaths: string[] = [];
+      for (const f of files.slice(0, 3)) {
+        if (!f.buffer?.length) continue;
+        if (uploadsConfigured()) {
+          const up = await uploadTaskPhoto({
+            bytes: f.buffer,
+            contentType: sniffImageMime(f.buffer, f.mimetype),
+            userId: helperId,
+          });
+          photoUrls.push(up.url);
+          photoPaths.push(up.path);
+        }
+        // Without GCS, checklist-only proof still unlocks End OTP.
+      }
+
+      let receipt: unknown;
+      const shoppingList =
+        typeof req.body?.shopping_list === 'string'
+          ? req.body.shopping_list
+          : task.description;
+      if (task.requires_purchase_proof && files[0]?.buffer?.length) {
+        receipt = await reconcileReceipt({
+          task: {
+            id: task.id,
+            title: task.title,
+            description: task.description,
+            category: task.category === 'groceryRun' ? 'grocery' : 'labor',
+            laborFeeLkr: task.total_amount,
+            goodsBudgetLkr: task.goods_budget,
+            lat: task.lat,
+            lng: task.lon,
+            requiredSkill: 'none',
+            clientId: task.client_id,
+            status: 'open',
+            escrow: {
+              laborHoldLkr: task.total_amount,
+              goodsHoldLkr: task.goods_budget,
+              status: 'held',
+            },
+            confirmCode: task.confirm_code ?? '0000',
+            createdAt: task.created_at,
+          },
+          shoppingList,
+          imageBytes: files[0].buffer,
+          mimeType: sniffImageMime(files[0].buffer, files[0].mimetype),
+        });
+      }
+
+      const receiptTotal = Number(
+        req.body?.receipt_total_lkr ?? req.body?.receiptTotalLkr,
+      );
+      const updated = await submitCompletionProof({
+        taskId,
+        helperId,
+        checkedItems: checked,
+        photoUrls,
+        photoPaths,
+        note,
+        receiptTotalLkr: Number.isFinite(receiptTotal) ? receiptTotal : undefined,
+      });
+      res.json({ task: updated, receipt });
+    } catch (e) {
+      const msg = friendlyError(e, 'Could not submit proof');
+      const code = msg.includes('Only the assigned') ? 403 : 400;
+      res.status(code).json({ error: msg });
+    }
+  },
+);
 
 app.post('/tasks/:id/receipt', upload.single('receipt'), async (req, res) => {
   const task = await getTask(String(req.params.id));

@@ -11,6 +11,7 @@ import {
   acceptTask,
   appendBatchMember,
   createTask,
+  ensureDemoStreetBatch,
   listOpenBatchesNearby,
   listHelperBatchRoute,
   openBatchWindow,
@@ -25,6 +26,7 @@ export type BatchOffer = BatchWindow & {
   seconds_left: number;
   discount_pct: number;
   sample_labor_lkr?: number;
+  demo?: boolean;
 };
 
 /** After Instant Dispatch — open a short same-street piggyback window. */
@@ -50,7 +52,12 @@ export async function listStreetBatches(
   lat: number,
   lon: number,
 ): Promise<{ pillar: 'batching'; radius_km: number; offers: BatchOffer[] }> {
-  const nearby = await listOpenBatchesNearby(lat, lon, BATCH_RADIUS_KM);
+  let nearby = await listOpenBatchesNearby(lat, lon, BATCH_RADIUS_KM);
+  // Cup demo: always keep at least one joinable window near the caller.
+  if (nearby.length === 0) {
+    await ensureDemoStreetBatch(lat, lon);
+    nearby = await listOpenBatchesNearby(lat, lon, BATCH_RADIUS_KM);
+  }
   const offers: BatchOffer[] = [];
   for (const b of nearby) {
     const sample = await quoteMicroPrice({
@@ -67,6 +74,7 @@ export async function listStreetBatches(
       ...b,
       discount_pct: Math.round(BATCH_DISCOUNT * 100),
       sample_labor_lkr: discounted,
+      demo: b.id.startsWith('batch_demo'),
     });
   }
   return { pillar: 'batching', radius_km: BATCH_RADIUS_KM, offers };

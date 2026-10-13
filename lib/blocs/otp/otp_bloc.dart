@@ -291,6 +291,7 @@ class OtpBloc extends Bloc<OtpEvent, OtpState> {
         emit(OtpStateInProgress(task: task));
         break;
       case TaskStatus.completed:
+      case TaskStatus.disputed:
         emit(OtpStateCompleted(task));
         break;
       default:

@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:hyperlocal/core/constants/app_config.dart';
 import 'package:hyperlocal/core/errors/app_exception.dart';
+import 'package:hyperlocal/core/utils/humanize_error.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// HTTP client for Zivo Cloud Run API (GCP-only backend).
@@ -86,15 +88,57 @@ class GcpApiClient {
     List<int>? fileBytes,
     String fileField = 'receipt',
     String filename = 'receipt.jpg',
+    String? contentType,
+    List<({List<int> bytes, String field, String filename, String? contentType})>?
+        extraFiles,
   }) async {
     final req = http.MultipartRequest('POST', _uri(path));
     if (_accessToken != null) {
       req.headers['Authorization'] = 'Bearer $_accessToken';
     }
     req.fields.addAll(fields);
-    if (fileBytes != null) {
+    void addFile({
+      required List<int> bytes,
+      required String field,
+      required String name,
+      String? type,
+    }) {
+      final declared = type?.trim() ?? '';
+      final MediaType mime;
+      if (declared.startsWith('audio/')) {
+        mime = MediaType.parse(declared);
+      } else {
+        mime = _sniffImageMediaType(bytes, type, name);
+      }
+      final safeName = name.contains('.')
+          ? name
+          : declared.startsWith('audio/')
+              ? 'clip.webm'
+              : 'photo.${mime.subtype == 'jpeg' ? 'jpg' : mime.subtype}';
       req.files.add(
-        http.MultipartFile.fromBytes(fileField, fileBytes, filename: filename),
+        http.MultipartFile.fromBytes(
+          field,
+          bytes,
+          filename: safeName,
+          contentType: mime,
+        ),
+      );
+    }
+
+    if (fileBytes != null) {
+      addFile(
+        bytes: fileBytes,
+        field: fileField,
+        name: filename,
+        type: contentType,
+      );
+    }
+    for (final f in extraFiles ?? const []) {
+      addFile(
+        bytes: f.bytes,
+        field: f.field,
+        name: f.filename,
+        type: f.contentType,
       );
     }
     final streamed = await _http.send(req);
@@ -136,12 +180,53 @@ class GcpApiClient {
       }
     }
     if (res.statusCode >= 400) {
-      final err = body['error'];
-      final message = err is String
-          ? err
-          : err?.toString() ?? 'Request failed (${res.statusCode})';
+      final err = body['error'] ?? body;
+      final message = humanizeError(err, statusCode: res.statusCode);
       throw AppAuthException(message, statusCode: res.statusCode);
     }
     return body;
+  }
+
+  /// Vertex rejects application/octet-stream — sniff JPEG/PNG/WebP.
+  MediaType _sniffImageMediaType(
+    List<int> bytes,
+    String? declared,
+    String filename,
+  ) {
+    final d = (declared ?? '').toLowerCase();
+    if (d.startsWith('image/')) {
+      final parts = d.split('/');
+      if (parts.length == 2 && parts[1].isNotEmpty) {
+        return MediaType('image', parts[1] == 'jpg' ? 'jpeg' : parts[1]);
+      }
+    }
+    if (bytes.length >= 3 &&
+        bytes[0] == 0xff &&
+        bytes[1] == 0xd8 &&
+        bytes[2] == 0xff) {
+      return MediaType('image', 'jpeg');
+    }
+    if (bytes.length >= 4 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4e &&
+        bytes[3] == 0x47) {
+      return MediaType('image', 'png');
+    }
+    if (bytes.length >= 12 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x45 &&
+        bytes[10] == 0x42 &&
+        bytes[11] == 0x50) {
+      return MediaType('image', 'webp');
+    }
+    final lower = filename.toLowerCase();
+    if (lower.endsWith('.png')) return MediaType('image', 'png');
+    if (lower.endsWith('.webp')) return MediaType('image', 'webp');
+    return MediaType('image', 'jpeg');
   }
 }

@@ -3,12 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
 import 'package:hyperlocal/data/models/task.dart';
 import 'package:hyperlocal/ui/auth/login_screen.dart';
+import 'package:hyperlocal/ui/auth/welcome_screen.dart';
 import 'package:hyperlocal/ui/auth/otp_verify_screen.dart';
 import 'package:hyperlocal/ui/auth/onboarding_screen.dart';
 import 'package:hyperlocal/ui/shell/shell_screen.dart';
 import 'package:hyperlocal/ui/client/task_creation/task_creation_screen.dart';
 import 'package:hyperlocal/ui/client/task_tracking/task_tracking_screen.dart';
 import 'package:hyperlocal/ui/client/wallet/wallet_screen.dart';
+import 'package:hyperlocal/ui/client/shared_live_screen.dart';
 import 'package:hyperlocal/ui/helper/job_feed/job_feed_screen.dart';
 import 'package:hyperlocal/ui/helper/active_job/active_job_screen.dart';
 import 'package:hyperlocal/ui/_shared/task_chat_screen.dart';
@@ -22,7 +24,9 @@ import 'package:hyperlocal/ui/admin/admin_dashboard_screen.dart';
 
 /// Named route paths — use these constants everywhere.
 abstract class AppRoutes {
+  /// Welcome gate (Zevoa-style). Phone/email form is [loginForm].
   static const String login = '/login';
+  static const String loginForm = '/login/form';
   static const String otpVerify = '/otp';
   static const String onboarding = '/onboarding';
   static const String shell = '/';
@@ -47,6 +51,10 @@ abstract class AppRoutes {
   static const String opsKyc = '/ops/kyc';
   /// Separate admin console for per-user KYC review.
   static const String admin = '/admin';
+  /// Family Assist shared live board (public token).
+  static const String sharedLive = '/shared/:token';
+
+  static String sharedLiveFor(String token) => '/shared/$token';
 }
 
 class AppRouter {
@@ -75,7 +83,20 @@ class AppRouter {
           final returnTo = state.uri.queryParameters['returnTo'];
           return _fadeTransition(
             state,
-            LoginScreen(returnTo: returnTo),
+            WelcomeScreen(returnTo: returnTo),
+          );
+        },
+      ),
+      GoRoute(
+        path: AppRoutes.loginForm,
+        name: 'loginForm',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (ctx, state) {
+          final returnTo = state.uri.queryParameters['returnTo'];
+          final signUp = state.uri.queryParameters['mode'] == 'signup';
+          return _fadeTransition(
+            state,
+            LoginScreen(returnTo: returnTo, initialSignUp: signUp),
           );
         },
       ),
@@ -196,6 +217,26 @@ class AppRouter {
               const GuidelinesScreen(),
             ),
           ),
+          GoRoute(
+            path: AppRoutes.createTask,
+            name: 'createTask',
+            pageBuilder: (ctx, state) {
+              TaskCategory? initial;
+              final extra = state.extra;
+              if (extra is TaskCategory) {
+                initial = extra;
+              } else if (extra is String) {
+                initial = TaskCategory.fromString(extra);
+              } else {
+                final q = state.uri.queryParameters['category'];
+                if (q != null) initial = TaskCategory.fromString(q);
+              }
+              return _noTransition(
+                state,
+                TaskCreationScreen(initialCategory: initial),
+              );
+            },
+          ),
         ],
       ),
       GoRoute(
@@ -215,27 +256,6 @@ class AppRouter {
           state,
           const AdminDashboardScreen(),
         ),
-      ),
-      GoRoute(
-        path: AppRoutes.createTask,
-        name: 'createTask',
-        parentNavigatorKey: rootNavigatorKey,
-        pageBuilder: (ctx, state) {
-          TaskCategory? initial;
-          final extra = state.extra;
-          if (extra is TaskCategory) {
-            initial = extra;
-          } else if (extra is String) {
-            initial = TaskCategory.fromString(extra);
-          } else {
-            final q = state.uri.queryParameters['category'];
-            if (q != null) initial = TaskCategory.fromString(q);
-          }
-          return _slideTransition(
-            state,
-            TaskCreationScreen(initialCategory: initial),
-          );
-        },
       ),
       GoRoute(
         path: AppRoutes.trackTask,
@@ -267,6 +287,15 @@ class AppRouter {
           ActiveJobScreen(taskId: state.pathParameters['taskId']!),
         ),
       ),
+      GoRoute(
+        path: AppRoutes.sharedLive,
+        name: 'sharedLive',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (ctx, state) => _fadeTransition(
+          state,
+          SharedLiveScreen(token: state.pathParameters['token'] ?? ''),
+        ),
+      ),
     ],
     errorBuilder: (ctx, state) => Scaffold(
       body: Center(
@@ -280,7 +309,9 @@ class AppRouter {
         loc == AppRoutes.jobFeed ||
         loc == AppRoutes.guidelines ||
         loc == AppRoutes.login ||
-        loc == AppRoutes.otpVerify;
+        loc == AppRoutes.loginForm ||
+        loc == AppRoutes.otpVerify ||
+        loc.startsWith('/shared/');
   }
 
   static bool _requiresAuth(String loc) {
@@ -333,7 +364,8 @@ class AppRouter {
     final isAuthenticated = authState is AuthAuthenticated;
     final isSignedIn = isAuthenticated || authState is AuthNeedsOnboarding;
     final loc = state.matchedLocation;
-    final isLoggingIn = loc == AppRoutes.login;
+    final isLoggingIn =
+        loc == AppRoutes.login || loc == AppRoutes.loginForm;
     final isOtp = loc == AppRoutes.otpVerify;
     final isOnboarding = loc == AppRoutes.onboarding;
     // Keep AuthFailure / loading on OTP screen so Verify errors stay visible.

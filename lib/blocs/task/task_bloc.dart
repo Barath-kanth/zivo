@@ -3,6 +3,7 @@ import 'package:hyperlocal/core/services/gcp/subscription_handle.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'package:hyperlocal/data/models/task_status.dart';
+import 'package:hyperlocal/core/utils/humanize_error.dart';
 import 'package:hyperlocal/data/repositories/task_repository.dart';
 import 'package:hyperlocal/data/models/task.dart';
 import 'task_event.dart';
@@ -227,7 +228,7 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
       // Keep helper Jobs feed in sync when the same device switches modes.
       emit(TaskNearbyLoaded(_openNearbyOnly([createdTask, ..._localNearbyTasks])));
     } catch (e) {
-      emit(TaskFailure(e.toString()));
+      emit(TaskFailure(humanizeError(e)));
     }
   }
 
@@ -238,6 +239,19 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
     Emitter<TaskState> emit,
   ) async {
     emit(TaskLoading());
+    Task? owned;
+    for (final t in [..._localNearbyTasks, ..._localClientTasks]) {
+      if (t.id == event.taskId) {
+        owned = t;
+        break;
+      }
+    }
+    if (owned != null && owned.clientId == event.helperId) {
+      emit(const TaskFailure(
+        'You cannot accept a task you posted. Switch to another account or wait for a helper.',
+      ));
+      return;
+    }
     if (event.taskId.startsWith('task-demo-')) {
       Task? task;
       for (int i = 0; i < _localNearbyTasks.length; i++) {

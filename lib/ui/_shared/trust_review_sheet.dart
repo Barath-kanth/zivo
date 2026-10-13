@@ -3,7 +3,9 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gap/gap.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
+import 'package:hyperlocal/core/utils/speak_text.dart';
 import 'package:hyperlocal/data/repositories/task_repository.dart';
+import 'package:hyperlocal/ui/_shared/a11y_widgets.dart';
 
 /// Cup-unique: runs Gemini Trust Arbitrator over the job evidence pack.
 Future<void> showTrustReviewSheet(
@@ -150,6 +152,28 @@ Future<void> showTrustReviewSheet(
                             '${result!['summary'] ?? ''}',
                             style: AppTextStyles.bodyMedium
                                 .copyWith(height: 1.4),
+                          ),
+                          Row(
+                            children: [
+                              A11yReadButton(
+                                text:
+                                    'Verdict ${verdict ?? ''}. ${result!['summary'] ?? ''}',
+                              ),
+                              A11ySimplifyButton(
+                                text: '${result!['summary'] ?? ''}',
+                                onSimplified: (plain, bullets) {
+                                  setLocal(() {
+                                    result = {
+                                      ...?result,
+                                      'summary': plain,
+                                      if (bullets.isNotEmpty)
+                                        'recommended_actions': bullets,
+                                    };
+                                  });
+                                  speakText(plain);
+                                },
+                              ),
+                            ],
                           ),
                           if ((result!['evidence_used'] as List?)
                                   ?.isNotEmpty ==

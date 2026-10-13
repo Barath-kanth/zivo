@@ -136,7 +136,9 @@ export async function checkTaskSafety(input: SafetyInput): Promise<SafetyResult>
     const action = g.action === 'allow' || g.action === 'block' || g.action === 'review'
       ? g.action
       : 'review';
-    const allowed = action === 'allow';
+    // Only hard-block. "review" is soft — Instant Dispatch / ordinary chores
+    // must not fail with a generic "Blocked by safety policy" false positive.
+    const allowed = action !== 'block';
     const risk: SafetyResult['risk'] =
       action === 'block' ? 'high' : action === 'review' ? 'medium' : 'low';
 

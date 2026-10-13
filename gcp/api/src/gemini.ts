@@ -6,6 +6,7 @@ import {
   FunctionCallingMode,
 } from '@google-cloud/vertexai';
 import { gcpProjectId, geminiModel } from './config.js';
+import { sniffImageMime } from './image_mime.js';
 
 /** Vertex region for Gemini (often us-central1 even if Run is asia-south1). */
 export const vertexLocation =
@@ -56,22 +57,33 @@ export async function generateGeminiMultimodalJson<T>(input: {
   prompt: string;
   imageBytes?: Buffer;
   mimeType?: string;
+  /** Optional model override (e.g. vision fallback). */
+  model?: string;
 }): Promise<T> {
-  const parts: Array<{ text: string } | { inlineData: { data: string; mimeType: string } }> =
-    [{ text: input.prompt }];
+  const parts: Array<
+    { text: string } | { inlineData: { data: string; mimeType: string } }
+  > = [];
+  // Media first — multimodal models ground better when vision/audio leads.
+  // Vertex rejects application/octet-stream for images; sniff images only.
   if (input.imageBytes?.length) {
+    const declared = input.mimeType?.trim() || '';
+    const mimeType = declared.startsWith('audio/')
+      ? declared
+      : sniffImageMime(input.imageBytes, input.mimeType);
     parts.push({
       inlineData: {
         data: input.imageBytes.toString('base64'),
-        mimeType: input.mimeType || 'image/jpeg',
+        mimeType,
       },
     });
   }
+  parts.push({ text: input.prompt });
+
   const model = getVertex().getGenerativeModel({
-    model: geminiModel,
+    model: input.model?.trim() || geminiModel,
     generationConfig: {
       temperature: 0.1,
-      maxOutputTokens: 1536,
+      maxOutputTokens: 2048,
       responseMimeType: 'application/json',
     },
   });
@@ -82,8 +94,25 @@ export async function generateGeminiMultimodalJson<T>(input: {
     result.response.candidates?.[0]?.content?.parts
       ?.map((p) => ('text' in p ? p.text : ''))
       .join('') ?? '';
-  const cleaned = text.replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
-  return JSON.parse(cleaned) as T;
+  if (!text.trim()) {
+    throw new Error('Gemini returned an empty vision response');
+  }
+  const cleaned = text
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/```$/i, '')
+    .trim();
+  const brace = cleaned.match(/\{[\s\S]*\}/);
+  const jsonText = brace?.[0] ?? cleaned;
+  try {
+    return JSON.parse(jsonText) as T;
+  } catch (err) {
+    throw new Error(
+      `Gemini vision JSON parse failed: ${
+        err instanceof Error ? err.message : 'error'
+      } · snippet=${jsonText.slice(0, 180)}`,
+    );
+  }
 }
 
 export type ToolHandler = (

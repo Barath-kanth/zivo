@@ -155,13 +155,27 @@ class Task extends Equatable {
     this.goodsBudget = 0,
     this.goodsSpent = 0,
     this.requiresPurchaseProof = false,
+    this.requiresCompletionProof = true,
+    this.completionChecklist = const [],
     this.proofSubmittedAt,
+    this.proofPhotoUrls = const [],
+    this.proofCheckedItems = const [],
+    this.proofNote,
     this.clientConfirmedDeliveryAt,
     this.disputedAt,
     this.disputeReason,
     this.storeName,
     this.photoUrls = const [],
     this.photoPaths = const [],
+    this.matchExplanation,
+    this.matchReasons = const [],
+    this.matchMode,
+    this.helperProfile,
+    this.bundleId,
+    this.bundleTitle,
+    this.bookedForUserId,
+    this.bookedForName,
+    this.shareToken,
   });
 
   final String id;
@@ -195,7 +209,12 @@ class Task extends Equatable {
   final double goodsBudget;
   final double goodsSpent;
   final bool requiresPurchaseProof;
+  final bool requiresCompletionProof;
+  final List<String> completionChecklist;
   final DateTime? proofSubmittedAt;
+  final List<String> proofPhotoUrls;
+  final List<String> proofCheckedItems;
+  final String? proofNote;
   final DateTime? clientConfirmedDeliveryAt;
   final DateTime? disputedAt;
   final String? disputeReason;
@@ -206,10 +225,37 @@ class Task extends Equatable {
   /// GCS object paths (used to refresh signed URLs for helpers).
   final List<String> photoPaths;
 
+  /// Client-facing "Explain my match" copy from Pillar C / Instant Dispatch.
+  final String? matchExplanation;
+  final List<String> matchReasons;
+  final String? matchMode;
+  /// Nested helper snapshot from API (`helper.full_name`, rating, …).
+  final Map<String, dynamic>? helperProfile;
+
+  /// One problem → several tasks.
+  final String? bundleId;
+  final String? bundleTitle;
+
+  /// Family Assist — booked on behalf of someone else.
+  final String? bookedForUserId;
+  final String? bookedForName;
+
+  /// Shared live token for family watchers.
+  final String? shareToken;
+
+  String? get helperDisplayName =>
+      helperProfile?['full_name'] as String? ??
+      helperProfile?['name'] as String?;
+
   bool get isPurchaseTask =>
       category == TaskCategory.groceryRun ||
       category == TaskCategory.errandRun ||
       requiresPurchaseProof;
+
+  bool get needsCompletionProof =>
+      requiresCompletionProof || requiresPurchaseProof;
+
+  bool get hasCompletionProof => proofSubmittedAt != null;
 
   double get escrowTotal => totalAmount + goodsBudget;
 
@@ -274,9 +320,24 @@ class Task extends Equatable {
       goodsBudget:          (json['goods_budget'] as num?)?.toDouble() ?? 0,
       goodsSpent:           (json['goods_spent'] as num?)?.toDouble() ?? 0,
       requiresPurchaseProof: json['requires_purchase_proof'] as bool? ?? false,
+      requiresCompletionProof:
+          json['requires_completion_proof'] as bool? ?? true,
+      completionChecklist: (json['completion_checklist'] as List?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
       proofSubmittedAt:     json['proof_submitted_at'] != null
                               ? DateTime.tryParse(json['proof_submitted_at'] as String)
                               : null,
+      proofPhotoUrls: (json['proof_photo_urls'] as List?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
+      proofCheckedItems: (json['proof_checked_items'] as List?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
+      proofNote: json['proof_note'] as String?,
       clientConfirmedDeliveryAt: json['client_confirmed_delivery_at'] != null
                               ? DateTime.tryParse(
                                   json['client_confirmed_delivery_at'] as String)
@@ -294,6 +355,20 @@ class Task extends Equatable {
                               ?.map((e) => e.toString())
                               .toList() ??
                           const [],
+      matchExplanation:     json['match_explanation'] as String?,
+      matchReasons:         (json['match_reasons'] as List?)
+                              ?.map((e) => e.toString())
+                              .toList() ??
+                          const [],
+      matchMode:            json['match_mode'] as String?,
+      helperProfile:        json['helper'] is Map
+          ? Map<String, dynamic>.from(json['helper'] as Map)
+          : null,
+      bundleId:             json['bundle_id'] as String?,
+      bundleTitle:          json['bundle_title'] as String?,
+      bookedForUserId:      json['booked_for_user_id'] as String?,
+      bookedForName:        json['booked_for_name'] as String?,
+      shareToken:           json['share_token'] as String?,
     );
   }
 
@@ -335,8 +410,23 @@ class Task extends Equatable {
     'goods_budget': goodsBudget,
     'goods_spent': goodsSpent,
     'requires_purchase_proof': requiresPurchaseProof,
+    'requires_completion_proof': requiresCompletionProof,
+    'completion_checklist': completionChecklist,
+    'proof_submitted_at': proofSubmittedAt?.toIso8601String(),
+    'proof_photo_urls': proofPhotoUrls,
+    'proof_checked_items': proofCheckedItems,
+    'proof_note': proofNote,
     'photo_urls': photoUrls,
     'photo_paths': photoPaths,
+    'match_explanation': matchExplanation,
+    'match_reasons': matchReasons,
+    'match_mode': matchMode,
+    if (helperProfile != null) 'helper': helperProfile,
+    'bundle_id': bundleId,
+    'bundle_title': bundleTitle,
+    'booked_for_user_id': bookedForUserId,
+    'booked_for_name': bookedForName,
+    'share_token': shareToken,
   };
 
   Task copyWith({
@@ -352,11 +442,20 @@ class Task extends Equatable {
     double? goodsBudget,
     double? goodsSpent,
     bool? requiresPurchaseProof,
+    bool? requiresCompletionProof,
+    List<String>? completionChecklist,
     DateTime? proofSubmittedAt,
+    List<String>? proofPhotoUrls,
+    List<String>? proofCheckedItems,
+    String? proofNote,
     DateTime? clientConfirmedDeliveryAt,
     String? disputeReason,
     List<String>? photoUrls,
     List<String>? photoPaths,
+    String? matchExplanation,
+    List<String>? matchReasons,
+    String? matchMode,
+    Map<String, dynamic>? helperProfile,
   }) {
     return Task(
       id: id,
@@ -387,7 +486,13 @@ class Task extends Equatable {
       goodsSpent: goodsSpent ?? this.goodsSpent,
       requiresPurchaseProof:
           requiresPurchaseProof ?? this.requiresPurchaseProof,
+      requiresCompletionProof:
+          requiresCompletionProof ?? this.requiresCompletionProof,
+      completionChecklist: completionChecklist ?? this.completionChecklist,
       proofSubmittedAt: proofSubmittedAt ?? this.proofSubmittedAt,
+      proofPhotoUrls: proofPhotoUrls ?? this.proofPhotoUrls,
+      proofCheckedItems: proofCheckedItems ?? this.proofCheckedItems,
+      proofNote: proofNote ?? this.proofNote,
       clientConfirmedDeliveryAt:
           clientConfirmedDeliveryAt ?? this.clientConfirmedDeliveryAt,
       disputedAt: disputedAt,
@@ -395,6 +500,15 @@ class Task extends Equatable {
       storeName: storeName,
       photoUrls: photoUrls ?? this.photoUrls,
       photoPaths: photoPaths ?? this.photoPaths,
+      matchExplanation: matchExplanation ?? this.matchExplanation,
+      matchReasons: matchReasons ?? this.matchReasons,
+      matchMode: matchMode ?? this.matchMode,
+      helperProfile: helperProfile ?? this.helperProfile,
+      bundleId: bundleId,
+      bundleTitle: bundleTitle,
+      bookedForUserId: bookedForUserId,
+      bookedForName: bookedForName,
+      shareToken: shareToken,
     );
   }
 

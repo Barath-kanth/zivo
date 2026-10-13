@@ -12,6 +12,7 @@ import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/router/app_router.dart';
 import 'package:hyperlocal/core/services/device_account_store.dart';
 import 'package:hyperlocal/core/utils/phone_utils.dart';
+import 'package:hyperlocal/ui/_shared/a11y_widgets.dart';
 import 'package:hyperlocal/ui/_shared/zivo_logo.dart';
 
 /// Uber LK–inspired login: bold brand intro + phone OTP / demo.
@@ -225,6 +226,12 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
               const ZivoLogo(size: 40, showWordmark: true)
                   .animate()
                   .fadeIn(duration: 300.ms),
+              const Gap(12),
+              const A11yAuthBar(
+                readText:
+                    'Zivo phone login. Enter your Sri Lanka mobile number starting with plus 94, then continue for a free OTP code. Accessibility Mode can read this screen aloud.',
+                hint: 'Zivo phone login — enter mobile and continue for OTP',
+              ),
               if (_addingAccount) ...[
                 const Gap(16),
                 Container(

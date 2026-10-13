@@ -13,16 +13,40 @@ import 'package:hyperlocal/core/constants/app_config.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/router/app_router.dart';
 import 'package:hyperlocal/core/utils/auth_gate.dart';
+import 'package:hyperlocal/core/utils/humanize_error.dart';
 import 'package:hyperlocal/data/models/task.dart';
 import 'package:hyperlocal/data/models/task_status.dart';
 import 'package:hyperlocal/data/repositories/task_repository.dart';
 import 'package:hyperlocal/ui/_shared/zivo_logo.dart';
 import 'package:hyperlocal/ui/_shared/task_status_badge.dart';
+import 'package:hyperlocal/ui/_shared/mode_cover_banner.dart';
+import 'package:hyperlocal/ui/_shared/trust_review_sheet.dart';
+import 'package:hyperlocal/ui/_shared/a11y_widgets.dart';
 import 'package:hyperlocal/blocs/mode/mode_cubit.dart';
+
+enum ClientHomePane {
+  /// Full home (mobile single column, or desktop services + rail).
+  full,
+
+  /// Desktop services column only — shell owns the activity rail.
+  servicesOnly,
+
+  /// Desktop activity rail only — stays mounted across shell destinations.
+  railOnly,
+}
 
 /// Client Home — Uber-style service marketplace for human tasks.
 class ClientHomeScreen extends StatefulWidget {
-  const ClientHomeScreen({super.key});
+  const ClientHomeScreen({
+    super.key,
+    this.pane = ClientHomePane.full,
+    this.forceDesktopChrome = false,
+  });
+
+  final ClientHomePane pane;
+
+  /// Match shell sidebar (≥1100px) even when the content pane is <900px wide.
+  final bool forceDesktopChrome;
 
   @override
   State<ClientHomeScreen> createState() => _ClientHomeScreenState();
@@ -32,6 +56,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   Timer? _refreshTimer;
   List<Map<String, dynamic>> _streetBatches = const [];
   List<Map<String, dynamic>> _liveHelpers = const [];
+  bool _helperMapExpanded = false;
 
   @override
   void initState() {
@@ -52,6 +77,13 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
       _refreshStreetBatches();
       _refreshLiveHelpers();
     });
+  }
+
+  static String _cleanHelperName(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return 'Helper';
+    return raw
+        .replaceAll(RegExp(r'\s*\(verified\)', caseSensitive: false), '')
+        .trim();
   }
 
   @override
@@ -134,62 +166,234 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     }
   }
 
+  Widget _buildServicesColumn() {
+    return CustomScrollView(
+      key: const PageStorageKey('client-desktop-services'),
+      slivers: [
+        _buildCoverHeader(),
+        _buildWalletStrip(),
+        _buildSectionTitle('What do you need help with?'),
+        _buildCategoryGrid(),
+        const SliverToBoxAdapter(child: Gap(100)),
+      ],
+    );
+  }
+
+  Widget _buildCoverHeader() {
+    return SliverToBoxAdapter(
+      child: ModeCoverBanner(
+        isHelper: false,
+        height: 210,
+        searchHint: 'Find services, chores & help',
+        onSearchTap: () async {
+          if (!await requireAuth(context, returnTo: AppRoutes.createTask)) {
+            return;
+          }
+          if (!mounted) return;
+          if (!await requireVerified(context, returnTo: AppRoutes.createTask)) {
+            return;
+          }
+          if (!mounted) return;
+          context.go(AppRoutes.createTask);
+        },
+        onModeTap: () {
+          final mode = context.read<ModeCubit>();
+          if (mode.state is! ModeToggling) mode.toggleMode();
+        },
+        trailing: BlocBuilder<AuthBloc, AuthState>(
+          builder: (context, state) {
+            final profile =
+                state is AuthAuthenticated ? state.profile : null;
+            final initial = profile?.displayInitial ?? '?';
+            final avatarUrl = profile?.avatarUrl;
+            final hasAvatar =
+                avatarUrl != null && avatarUrl.startsWith('http');
+            return Material(
+              color: Colors.white.withValues(alpha: 0.92),
+              shape: const CircleBorder(),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: () => context.go(AppRoutes.account),
+                child: CircleAvatar(
+                  radius: 16,
+                  backgroundColor: Colors.white,
+                  backgroundImage:
+                      hasAvatar ? NetworkImage(avatarUrl) : null,
+                  child: hasAvatar
+                      ? null
+                      : Text(
+                          initial,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 12,
+                            color: Colors.black,
+                          ),
+                        ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWalletStrip() {
+    return SliverToBoxAdapter(
+      child: BlocBuilder<AuthBloc, AuthState>(
+        builder: (context, state) {
+          final profile = state is AuthAuthenticated ? state.profile : null;
+          final wallet = profile?.walletBalance ?? 0.0;
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.borderColor),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.04),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  const ZivoLogo(size: 28),
+                  const Gap(10),
+                  Expanded(
+                    child: Text(
+                      AppConfig.money(wallet),
+                      style: AppTextStyles.headingSmall.copyWith(fontSize: 16),
+                    ),
+                  ),
+                  _miniAction(
+                    icon: Icons.north_east_rounded,
+                    label: 'Pay',
+                    onTap: () => context.go(AppRoutes.wallet),
+                  ),
+                  const Gap(8),
+                  _miniAction(
+                    icon: Icons.add_rounded,
+                    label: 'Top Up',
+                    onTap: () => context.go(AppRoutes.wallet),
+                  ),
+                  const Gap(8),
+                  _miniAction(
+                    icon: Icons.more_horiz_rounded,
+                    label: 'More',
+                    onTap: () => context.go(AppRoutes.account),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _miniAction({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Column(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: AppColors.surfaceDark,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 18, color: Colors.black),
+          ),
+          const Gap(2),
+          Text(
+            label,
+            style: AppTextStyles.bodySmall.copyWith(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActivityRail() {
+    return Container(
+      width: 320,
+      decoration: const BoxDecoration(
+        color: AppColors.surfaceDark,
+        border: Border(left: BorderSide(color: AppColors.borderColor)),
+      ),
+      child: SafeArea(
+        child: CustomScrollView(
+          key: const PageStorageKey('client-desktop-activity'),
+          slivers: [
+            _buildSectionTitle('Your Active Requests'),
+            _buildMyTasks(),
+            _buildSectionTitle('Around your neighbourhood'),
+            _buildInstantDispatchCard(),
+            _buildStreetBatchCard(),
+            _buildNeighborVouchCard(),
+            _buildNearbyHelpersMap(),
+            const SliverToBoxAdapter(child: Gap(100)),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (widget.pane == ClientHomePane.railOnly) {
+      return ColoredBox(
+        color: AppColors.surfaceDark,
+        child: _buildActivityRail(),
+      );
+    }
+
     return Scaffold(
       backgroundColor: AppColors.backgroundDark,
       body: LayoutBuilder(
         builder: (context, constraints) {
-          if (constraints.maxWidth >= 900) {
+          final desktop =
+              widget.forceDesktopChrome || constraints.maxWidth >= 900;
+
+          if (widget.pane == ClientHomePane.servicesOnly) {
+            return _buildServicesColumn();
+          }
+
+          if (desktop) {
             return Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(
-                  child: CustomScrollView(
-                    key: const PageStorageKey('client-desktop-services'),
-                    slivers: [
-                      _buildHeader(),
-                      _buildSearchBar(),
-                      _buildSectionTitle('What do you need help with?'),
-                      _buildCategoryGrid(),
-                      const SliverToBoxAdapter(child: Gap(100)),
-                    ],
-                  ),
-                ),
-                Container(
-                  width: 320,
-                  decoration: const BoxDecoration(
-                    color: AppColors.surfaceDark,
-                    border: Border(left: BorderSide(color: AppColors.borderColor)),
-                  ),
-                  child: SafeArea(
-                    child: CustomScrollView(
-                      key: const PageStorageKey('client-desktop-activity'),
-                      slivers: [
-                        _buildSectionTitle('Your Active Requests'),
-                        _buildMyTasks(),
-                        _buildSectionTitle('Around your neighbourhood'),
-                        _buildInstantDispatchCard(),
-                        _buildStreetBatchCard(),
-                        _buildNeighborVouchCard(),
-                        const SliverToBoxAdapter(child: Gap(100)),
-                      ],
-                    ),
-                  ),
-                ),
+                Expanded(child: _buildServicesColumn()),
+                _buildActivityRail(),
               ],
             );
           }
+
           return CustomScrollView(
             key: const PageStorageKey('client-mobile-home'),
             slivers: [
-              _buildHeader(),
-              _buildSearchBar(),
+              _buildCoverHeader(),
+              _buildWalletStrip(),
               _buildInstantDispatchCard(),
               _buildStreetBatchCard(),
               _buildNeighborVouchCard(),
+              _buildNearbyHelpersMap(),
               _buildSectionTitle('What do you need help with?'),
-              _buildCategoryGrid(),
+              _buildCategoryGrid(compact: true),
               _buildSectionTitle('Your Active Requests'),
               _buildMyTasks(),
               const SliverToBoxAdapter(child: Gap(100)),
@@ -197,7 +401,6 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           );
         },
       ),
-      floatingActionButton: _buildPostTaskFAB(),
     );
   }
 
@@ -221,7 +424,6 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                     final avatarUrl = profile?.avatarUrl;
                     final hasAvatar = avatarUrl != null &&
                         avatarUrl.startsWith('http');
-                    final currency = AppConfig.currencyCode;
 
                     return Center(
                       child: ConstrainedBox(
@@ -354,8 +556,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                     icon: Icons
                                         .account_balance_wallet_outlined,
                                     label: 'Wallet',
-                                    sublabel:
-                                        '$currency ${wallet.toStringAsFixed(0)}',
+                                    sublabel: AppConfig.money(wallet),
                                     accent: AppColors.accent,
                                     onTap: () =>
                                         context.go(AppRoutes.wallet),
@@ -832,15 +1033,15 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                 Text(
                                   total == null
                                       ? (descError ?? 'Add a full description')
-                                      : 'Pay LKR $total',
+                                      : 'Pay ${AppConfig.money(num.tryParse('$total') ?? 0)}',
                                   style: AppTextStyles.headingSmall
                                       .copyWith(fontSize: 15),
                                 ),
                                 if (fairFloor != null) ...[
                                   const Gap(4),
                                   Text(
-                                    'Fair floor LKR $fairFloor'
-                                    '${boost != null && boost != 0 ? ' + your tip LKR $boost' : ''}'
+                                    'Fair floor ${AppConfig.money(num.tryParse('$fairFloor') ?? 0)}'
+                                    '${boost != null && boost != 0 ? ' + your tip ${AppConfig.money(num.tryParse('$boost') ?? 0)}' : ''}'
                                     ' · you cannot undercut',
                                     style: AppTextStyles.bodySmall.copyWith(
                                       fontSize: 11,
@@ -946,12 +1147,14 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
       final pricing = result['pricing'] as Map?;
       final labor = pricing?['labor_lkr'];
       final batch = result['batch'] as Map?;
+      final taskMap = result['task'] as Map?;
+      final taskId = taskMap?['id']?.toString();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Matched $name · LKR ${labor ?? '—'} locked. '
+            'Matched $name · ${labor == null ? '—' : AppConfig.money(num.tryParse('$labor') ?? 0)} locked. '
             '${batch != null ? 'Street batch open for neighbors. ' : ''}'
-            '${result['explanation'] ?? ''}',
+            'Open tracking to see why they fit.',
           ),
           backgroundColor: AppColors.successColor,
         ),
@@ -961,11 +1164,14 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
         context.read<TaskBloc>().add(TaskFetchClientTasks(auth.profile.id));
       }
       _refreshStreetBatches();
+      if (taskId != null && taskId.isNotEmpty && mounted) {
+        context.go('/task/$taskId/track');
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('$e'),
+          content: Text(humanizeError(e)),
           backgroundColor: AppColors.errorColor,
         ),
       );
@@ -986,7 +1192,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     final target = needsVouch.isNotEmpty
         ? needsVouch.first
         : _liveHelpers.first;
-    final name = target['full_name']?.toString() ?? 'Helper';
+    final name = _cleanHelperName(target['full_name']?.toString());
     final count = target['vouch_count'] ?? 0;
     final threshold = target['vouch_threshold'] ?? 3;
     final badged = target['neighbor_vouched'] == true;
@@ -999,7 +1205,13 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           borderRadius: BorderRadius.circular(16),
           child: InkWell(
             borderRadius: BorderRadius.circular(16),
-            onTap: badged ? null : () => _vouchHelper(target),
+            onTap: () {
+              if (!badged) {
+                _vouchHelper(target);
+              } else {
+                setState(() => _helperMapExpanded = !_helperMapExpanded);
+              }
+            },
             child: Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -1008,54 +1220,183 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                   color: AppColors.accent.withValues(alpha: 0.3),
                 ),
               ),
-              child: Row(
+              child: Column(
                 children: [
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: AppColors.accent.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(
-                      badged
-                          ? Icons.verified_user_rounded
-                          : Icons.handshake_rounded,
-                      color: AppColors.accent,
-                    ),
-                  ),
-                  const Gap(12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          badged
-                              ? 'Neighbor-Vouched · $name'
-                              : 'Vouch $name ($count/$threshold)',
-                          style:
-                              AppTextStyles.headingSmall.copyWith(fontSize: 14),
+                  Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: AppColors.accent.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                        Text(
+                        child: Icon(
                           badged
-                              ? 'Unlocked for inside-home micro-tasks'
-                              : 'Stake LKR 200 · 3 local vouches unlock home entry',
-                          style: AppTextStyles.bodySmall.copyWith(
-                            color: AppColors.textMuted,
-                            fontSize: 11,
+                              ? Icons.verified_user_rounded
+                              : Icons.handshake_rounded,
+                          color: AppColors.accent,
+                        ),
+                      ),
+                      const Gap(12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              badged
+                                  ? 'Neighbor-Vouched · $name'
+                                  : 'Vouch $name ($count/$threshold)',
+                              style: AppTextStyles.headingSmall
+                                  .copyWith(fontSize: 14),
+                            ),
+                            Text(
+                              badged
+                                  ? 'Unlocked for inside-home micro-tasks'
+                                  : 'Stake LKR 200 · 3 local vouches unlock home entry',
+                              style: AppTextStyles.bodySmall.copyWith(
+                                color: AppColors.textMuted,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (!badged)
+                        Text(
+                          'Vouch',
+                          style: AppTextStyles.capsLabel
+                              .copyWith(color: AppColors.accent),
+                        )
+                      else
+                        Icon(
+                          _helperMapExpanded
+                              ? Icons.expand_less_rounded
+                              : Icons.expand_more_rounded,
+                          color: AppColors.textMuted,
+                        ),
+                    ],
+                  ),
+                  if (badged) ...[
+                    const Gap(10),
+                    InkWell(
+                      onTap: () => setState(
+                        () => _helperMapExpanded = !_helperMapExpanded,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.map_outlined,
+                            size: 16,
+                            color: AppColors.helperAccent,
                           ),
-                        ),
-                      ],
+                          const Gap(6),
+                          Text(
+                            _helperMapExpanded
+                                ? 'Hide map'
+                                : 'Show helpers on map',
+                            style: AppTextStyles.bodySmall.copyWith(
+                              color: AppColors.helperAccent,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  if (!badged)
-                    Text(
-                      'Vouch',
-                      style: AppTextStyles.capsLabel
-                          .copyWith(color: AppColors.accent),
-                    ),
+                  ],
                 ],
               ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Big nearby-helpers map — expands under worker details.
+  Widget _buildNearbyHelpersMap() {
+    if (!_helperMapExpanded) {
+      return const SliverToBoxAdapter(child: SizedBox.shrink());
+    }
+    final helpers = _liveHelpers;
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: SizedBox(
+            height: 380,
+            width: double.infinity,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                const ColoredBox(color: Color(0xFFDCE8DF)),
+                CustomPaint(painter: _HomeNearbyMapPainter()),
+                // Helper pins (simple spread)
+                for (var i = 0; i < helpers.length && i < 6; i++)
+                  Align(
+                    alignment: Alignment(
+                      -0.55 + (i % 3) * 0.45,
+                      -0.35 + (i ~/ 3) * 0.55,
+                    ),
+                    child: _HomeMapPin(
+                      label: _cleanHelperName(
+                        helpers[i]['full_name']?.toString(),
+                      ),
+                    ),
+                  ),
+                if (helpers.isEmpty)
+                  const Center(
+                    child: Text(
+                      'No porch lights nearby yet',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ),
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  bottom: 12,
+                  child: Material(
+                    color: Colors.white.withValues(alpha: 0.94),
+                    borderRadius: BorderRadius.circular(14),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      child: Text(
+                        helpers.isEmpty
+                            ? 'Helpers appear here when Available nearby'
+                            : '${helpers.length} helper${helpers.length == 1 ? '' : 's'} nearby · tap a task to track live',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 10,
+                  right: 10,
+                  child: Material(
+                    color: Colors.white,
+                    shape: const CircleBorder(),
+                    child: IconButton(
+                      tooltip: 'Close map',
+                      onPressed: () =>
+                          setState(() => _helperMapExpanded = false),
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -1120,14 +1461,12 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   }
 
   Widget _buildStreetBatchCard() {
-    if (_streetBatches.isEmpty) {
-      return const SliverToBoxAdapter(child: SizedBox.shrink());
-    }
-    final offer = _streetBatches.first;
-    final helper = offer['helper_name']?.toString() ?? 'Helper';
-    final secs = offer['seconds_left'] ?? 0;
-    final price = offer['sample_labor_lkr'];
-    final discount = offer['discount_pct'] ?? 30;
+    final hasOffer = _streetBatches.isNotEmpty;
+    final offer = hasOffer ? _streetBatches.first : null;
+    final helper = _cleanHelperName(offer?['helper_name']?.toString());
+    final secs = offer?['seconds_left'] ?? 0;
+    final price = offer?['sample_labor_lkr'];
+    final discount = offer?['discount_pct'] ?? 30;
 
     return SliverToBoxAdapter(
       child: Padding(
@@ -1137,13 +1476,23 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           borderRadius: BorderRadius.circular(16),
           child: InkWell(
             borderRadius: BorderRadius.circular(16),
-            onTap: () => _joinStreetBatch(offer),
+            onTap: hasOffer && offer != null
+                ? () => _joinStreetBatch(offer)
+                : () => ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'No piggyback window yet — Request Instant Dispatch to open one on your block.',
+                        ),
+                      ),
+                    ),
             child: Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: AppColors.successColor.withValues(alpha: 0.4),
+                  color: hasOffer
+                      ? AppColors.successColor.withValues(alpha: 0.4)
+                      : AppColors.borderColor,
                 ),
               ),
               child: Row(
@@ -1152,11 +1501,18 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                     width: 44,
                     height: 44,
                     decoration: BoxDecoration(
-                      color: AppColors.successColor.withValues(alpha: 0.12),
+                      color: (hasOffer
+                              ? AppColors.successColor
+                              : AppColors.textMuted)
+                          .withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Icon(Icons.route_rounded,
-                        color: AppColors.successColor),
+                    child: Icon(
+                      Icons.route_rounded,
+                      color: hasOffer
+                          ? AppColors.successColor
+                          : AppColors.textMuted,
+                    ),
                   ),
                   const Gap(12),
                   Expanded(
@@ -1164,12 +1520,17 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Street Batch open',
-                          style: AppTextStyles.headingSmall.copyWith(fontSize: 14),
+                          hasOffer
+                              ? 'Street Batch open'
+                              : 'Street Batch',
+                          style: AppTextStyles.headingSmall
+                              .copyWith(fontSize: 14),
                         ),
                         Text(
-                          '$helper on your block · ~$discount% off'
-                          '${price != null ? ' · from LKR $price' : ''} · ${secs}s left',
+                          hasOffer
+                              ? '$helper on your block · ~$discount% off'
+                                  '${price != null ? ' · from ${AppConfig.money(num.tryParse('$price') ?? 0)}' : ''} · ${secs}s left'
+                              : 'No piggyback window on your block — Dispatch opens one',
                           style: AppTextStyles.bodySmall.copyWith(
                             color: AppColors.textMuted,
                             fontSize: 11,
@@ -1179,9 +1540,11 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                     ),
                   ),
                   Text(
-                    'Join',
+                    hasOffer ? 'Join' : 'Wait',
                     style: AppTextStyles.capsLabel.copyWith(
-                      color: AppColors.successColor,
+                      color: hasOffer
+                          ? AppColors.successColor
+                          : AppColors.textMuted,
                     ),
                   ),
                 ],
@@ -1264,7 +1627,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Joined batch · LKR ${result['labor_lkr']} '
+            'Joined batch · ${AppConfig.money(num.tryParse('${result['labor_lkr']}') ?? 0)} '
             '(${result['discount_pct']}% off). ${result['explanation'] ?? ''}',
           ),
           backgroundColor: AppColors.successColor,
@@ -1298,34 +1661,129 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     );
   }
 
-  Widget _buildCategoryGrid() {
-    final categories = TaskCategory.values;
+  Future<void> _openCategory(TaskCategory cat) async {
+    final returnTo = '${AppRoutes.createTask}?category=${cat.name}';
+    if (!await requireAuth(context, returnTo: returnTo)) return;
+    if (!mounted) return;
+    if (!await requireVerified(context, returnTo: returnTo)) return;
+    if (!mounted) return;
+    context.go(AppRoutes.createTask, extra: cat);
+  }
+
+  void _showMoreCategories() {
+    final overflow = CategoryIcon.mobileOverflow;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.borderColor,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const Gap(14),
+                Text('More services', style: AppTextStyles.headingSmall),
+                const Gap(12),
+                GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 4,
+                    mainAxisExtent: 118,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                  ),
+                  itemCount: overflow.length,
+                  itemBuilder: (_, i) {
+                    final cat = overflow[i];
+                    return _CategoryTile(
+                      category: cat,
+                      color: _catColor(cat),
+                      index: i,
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _openCategory(cat);
+                      },
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Desktop: full category list. Phone: 8 primary + More.
+  Widget _buildCategoryGrid({bool compact = false}) {
+    if (!compact) {
+      final categories = TaskCategory.values;
+      return SliverPadding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        sliver: SliverGrid(
+          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 140,
+            mainAxisExtent: 148,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+          ),
+          delegate: SliverChildBuilderDelegate(
+            (ctx, i) => _CategoryTile(
+              category: categories[i],
+              color: _catColor(categories[i]),
+              index: i,
+              onTap: () => _openCategory(categories[i]),
+            ),
+            childCount: categories.length,
+          ),
+        ),
+      );
+    }
+
+    final primary = CategoryIcon.mobilePrimary;
     return SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       sliver: SliverGrid(
-        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-          maxCrossAxisExtent: 140,
-          mainAxisExtent: 148,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 4,
+          mainAxisExtent: 118,
           crossAxisSpacing: 10,
           mainAxisSpacing: 10,
         ),
         delegate: SliverChildBuilderDelegate(
-          (ctx, i) => _CategoryTile(
-            category: categories[i],
-            color: _catColor(categories[i]),
-            index: i,
-            onTap: () async {
-              final cat = categories[i];
-              final returnTo =
-                  '${AppRoutes.createTask}?category=${cat.name}';
-              if (!await requireAuth(context, returnTo: returnTo)) return;
-              if (!mounted) return;
-              if (!await requireVerified(context, returnTo: returnTo)) return;
-              if (!mounted) return;
-              context.go(AppRoutes.createTask, extra: cat);
-            },
-          ),
-          childCount: categories.length,
+          (ctx, i) {
+            if (i == primary.length) {
+              return _MoreCategoryTile(
+                index: i,
+                onTap: _showMoreCategories,
+              );
+            }
+            final cat = primary[i];
+            return _CategoryTile(
+              category: cat,
+              color: _catColor(cat),
+              index: i,
+              onTap: () => _openCategory(cat),
+            );
+          },
+          childCount: primary.length + 1,
         ),
       ),
     );
@@ -1352,10 +1810,12 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
         final source = state is TaskClientLoaded
             ? state.tasks
             : bloc.peekClientTasks();
-        // Active + just-completed so client can see “finished”
+        // Active + completed/disputed so client can see finished / frozen jobs
         final tasks = source
             .where((t) =>
-                !t.status.isTerminal || t.status == TaskStatus.completed)
+                !t.status.isTerminal ||
+                t.status == TaskStatus.completed ||
+                t.status == TaskStatus.disputed)
             .toList();
 
         if (tasks.isEmpty) {
@@ -1377,28 +1837,6 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     );
   }
 
-  Widget _buildPostTaskFAB() {
-    return FloatingActionButton.extended(
-      onPressed: () async {
-        if (!await requireAuth(context, returnTo: AppRoutes.createTask)) {
-          return;
-        }
-        if (!mounted) return;
-        if (!await requireVerified(context, returnTo: AppRoutes.createTask)) {
-          return;
-        }
-        if (!mounted) return;
-        context.go(AppRoutes.createTask);
-      },
-      backgroundColor: AppColors.accent,
-      icon: const Icon(Icons.add_rounded, color: Colors.white),
-      label: Text(
-        'Post a Task',
-        style: AppTextStyles.buttonLabel.copyWith(color: Colors.white),
-      ),
-      elevation: 0,
-    );
-  }
 }
 
 // ── Category Tile ─────────────────────────────────────────────────────────────
@@ -1419,25 +1857,26 @@ class _CategoryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: AppColors.cardDark,
-      borderRadius: BorderRadius.circular(16),
-      clipBehavior: Clip.antiAlias,
+      color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              CategoryIconBadge(category, size: 52),
-              const Spacer(),
+              CategoryIconBadge(category, size: 56),
+              const Gap(8),
               Text(
                 category.displayName,
                 style: AppTextStyles.bodySmall.copyWith(
                   color: AppColors.textPrimary,
                   fontWeight: FontWeight.w600,
-                  height: 1.25,
+                  height: 1.2,
+                  fontSize: 11,
                 ),
+                textAlign: TextAlign.center,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -1450,7 +1889,116 @@ class _CategoryTile extends StatelessWidget {
   }
 }
 
+class _MoreCategoryTile extends StatelessWidget {
+  const _MoreCategoryTile({required this.index, required this.onTap});
+  final int index;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const MoreIconBadge(size: 56),
+              const Gap(8),
+              Text(
+                'More',
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w600,
+                  height: 1.2,
+                  fontSize: 11,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      ),
+    ).animate(delay: Duration(milliseconds: 15 * index))
+      .fadeIn(duration: 220.ms);
+  }
+}
+
 // ── Client Task Card ──────────────────────────────────────────────────────────
+
+Future<void> _openClientDispute(BuildContext context, Task task) async {
+  final reasonCtrl = TextEditingController();
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Open dispute'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Escrow stays frozen until ops or Trust review clears this. '
+            'Describe what went wrong.',
+            style: AppTextStyles.bodySmall,
+          ),
+          const Gap(12),
+          TextField(
+            controller: reasonCtrl,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              labelText: 'What happened?',
+              hintText: 'e.g. Helper arrived late and goods were missing',
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Freeze escrow'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true || !context.mounted) {
+    reasonCtrl.dispose();
+    return;
+  }
+  final reason = reasonCtrl.text.trim();
+  reasonCtrl.dispose();
+  try {
+    await context.read<TaskRepository>().openDispute(
+          taskId: task.id,
+          reason: reason,
+        );
+    if (!context.mounted) return;
+    final auth = context.read<AuthBloc>().state;
+    if (auth is AuthAuthenticated) {
+      context.read<TaskBloc>().add(TaskFetchClientTasks(auth.profile.id));
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Dispute opened — escrow frozen'),
+        backgroundColor: AppColors.warningColor,
+      ),
+    );
+  } catch (e) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(humanizeError(e)),
+        backgroundColor: AppColors.errorColor,
+      ),
+    );
+  }
+}
 
 class _ClientTaskCard extends StatelessWidget {
   const _ClientTaskCard({required this.task, required this.index});
@@ -1537,11 +2085,21 @@ class _ClientTaskCard extends StatelessWidget {
                       style: AppTextStyles.bodyMedium,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis),
-                  if ((task.status == TaskStatus.matched ||
-                          task.status == TaskStatus.inProgress) &&
-                      (task.startOtp != null || task.endOtp != null)) ...[
-                    const Gap(12),
-                    _ClientOtpBanner(task: task),
+                  if (task.status == TaskStatus.matched ||
+                      task.status == TaskStatus.inProgress) ...[
+                    const Gap(10),
+                    if (task.helperDisplayName != null)
+                      Text(
+                        'Helper: ${_ClientHomeScreenState._cleanHelperName(task.helperDisplayName)}',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.helperAccent,
+                        ),
+                      ),
+                    if (task.startOtp != null || task.endOtp != null) ...[
+                      const Gap(8),
+                      _ClientOtpBanner(task: task),
+                    ],
                   ],
                   if (task.status == TaskStatus.completed) ...[
                     const Gap(12),
@@ -1561,30 +2119,80 @@ class _ClientTaskCard extends StatelessWidget {
                       _Chip(icon: Icons.schedule_outlined,
                         label: '${task.estimatedHours}h', color: color),
                       _Chip(icon: Icons.payments_outlined,
-                        label: 'LKR ${task.hourlyRate.toStringAsFixed(2)}/hr',
+                        label: '${AppConfig.money(task.hourlyRate)}/hr',
                         color: color),
                       _Chip(icon: Icons.receipt_long_outlined,
-                        label: 'LKR ${task.totalAmount.toStringAsFixed(2)} total',
+                        label: '${AppConfig.money(task.totalAmount)} total',
                         color: color),
                     ],
                   ),
                   const Gap(12),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: task.status == TaskStatus.open
-                            ? AppColors.helperAccent : AppColors.accent,
-                        borderRadius: BorderRadius.circular(8),
+                  Row(
+                    children: [
+                      if (task.status == TaskStatus.matched ||
+                          task.status == TaskStatus.inProgress) ...[
+                        TextButton.icon(
+                          onPressed: () => context.push(
+                            AppRoutes.chatFor(task.id, title: task.title),
+                          ),
+                          icon: const Icon(Icons.chat_bubble_outline_rounded,
+                              size: 16),
+                          label: const Text('Chat'),
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppColors.helperAccent,
+                            padding: EdgeInsets.zero,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: () => showTrustReviewSheet(
+                            context,
+                            taskId: task.id,
+                          ),
+                          icon: const Icon(Icons.gavel_rounded, size: 16),
+                          label: const Text('Trust'),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.black87,
+                            padding: EdgeInsets.zero,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: () => _openClientDispute(context, task),
+                          icon: const Icon(Icons.report_outlined, size: 16),
+                          label: const Text('Dispute'),
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppColors.warningColor,
+                            padding: EdgeInsets.zero,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                      ],
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: task.status == TaskStatus.open
+                              ? AppColors.helperAccent
+                              : AppColors.accent,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          task.status == TaskStatus.open
+                              ? 'Review Applicants'
+                              : task.status == TaskStatus.disputed
+                                  ? 'Disputed'
+                                  : 'Track',
+                          style: AppTextStyles.capsLabel.copyWith(
+                            color: Colors.white,
+                            letterSpacing: 0.5,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
-                      child: Text(
-                        task.status == TaskStatus.open ? 'Review Applicants' : 'Track',
-                        style: AppTextStyles.capsLabel.copyWith(
-                          color: Colors.white, letterSpacing: 0.5,
-                          fontSize: 10, fontWeight: FontWeight.bold),
-                      ),
-                    ),
+                    ],
                   ),
                 ],
               ),
@@ -1599,50 +2207,105 @@ class _ClientTaskCard extends StatelessWidget {
   }
 }
 
-class _ClientOtpBanner extends StatelessWidget {
+class _ClientOtpBanner extends StatefulWidget {
   const _ClientOtpBanner({required this.task});
   final Task task;
+
+  @override
+  State<_ClientOtpBanner> createState() => _ClientOtpBannerState();
+}
+
+class _ClientOtpBannerState extends State<_ClientOtpBanner> {
+  bool _sending = false;
+  bool _sent = false;
+
+  Task get task => widget.task;
+
+  Future<void> _sendOtpInChat() async {
+    final inProgress = task.status == TaskStatus.inProgress;
+    final code = inProgress ? task.endOtp : task.startOtp;
+    if (code == null || code.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('OTP not ready yet — refresh in a moment')),
+      );
+      return;
+    }
+    setState(() => _sending = true);
+    try {
+      final body = inProgress
+          ? 'End OTP: $code — enter this to finish the job and release escrow.'
+          : 'Start OTP: $code — enter this to begin the job.';
+      await context.read<TaskRepository>().sendTaskChatMessage(
+            taskId: task.id,
+            body: body,
+          );
+      if (!mounted) return;
+      setState(() {
+        _sending = false;
+        _sent = true;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            inProgress
+                ? 'End OTP sent in chat'
+                : 'Start OTP sent in chat',
+          ),
+          backgroundColor: AppColors.successColor,
+          action: SnackBarAction(
+            label: 'Open chat',
+            textColor: Colors.white,
+            onPressed: () => context.push(
+              AppRoutes.chatFor(task.id, title: task.title),
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _sending = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(humanizeError(e)),
+          backgroundColor: AppColors.errorColor,
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final inProgress = task.status == TaskStatus.inProgress;
     final code = inProgress ? task.endOtp : task.startOtp;
     final title = inProgress
-        ? 'End OTP for helper: ${code ?? '----'}'
-        : 'Start OTP for helper: ${code ?? '----'}';
+        ? 'End OTP: ${code ?? '----'}'
+        : 'Start OTP: ${code ?? '----'}';
     final hint = inProgress
-        ? 'Job is underway. When you are happy with the work, read this End code to the helper — that finishes the job and releases escrow.'
-        : 'Give this Start code to the helper to begin. A different End OTP appears here after they start.';
+        ? 'When the work looks good, send the End OTP in chat — helper finishes and escrow releases.'
+        : 'Helper accepted. Send the Start OTP in chat so they can begin — no need to read it aloud.';
+    final accent =
+        inProgress ? AppColors.successColor : AppColors.helperAccent;
 
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: (inProgress ? AppColors.successColor : AppColors.accent)
-            .withValues(alpha: 0.12),
+        color: accent.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: (inProgress ? AppColors.successColor : AppColors.accent)
-              .withValues(alpha: 0.35),
-        ),
+        border: Border.all(color: accent.withValues(alpha: 0.35)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(
-                Icons.lock_outline_rounded,
-                size: 16,
-                color: inProgress ? AppColors.successColor : AppColors.accent,
-              ),
+              Icon(Icons.lock_outline_rounded, size: 16, color: accent),
               const Gap(8),
               Expanded(
                 child: Text(
                   title,
                   style: AppTextStyles.bodySmall.copyWith(
-                    color:
-                        inProgress ? AppColors.successColor : AppColors.accent,
+                    color: accent,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0.4,
                   ),
@@ -1655,6 +2318,9 @@ class _ClientOtpBanner extends StatelessWidget {
                   fontSize: 10,
                 ),
               ),
+              A11yReadButton(
+                text: '$title. $hint',
+              ),
             ],
           ),
           const Gap(6),
@@ -1663,6 +2329,52 @@ class _ClientOtpBanner extends StatelessWidget {
             style: AppTextStyles.bodySmall.copyWith(
               color: AppColors.textMuted,
               fontSize: 11,
+            ),
+          ),
+          const Gap(10),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _sending || code == null ? null : _sendOtpInChat,
+              icon: _sending
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Icon(
+                      _sent ? Icons.check_rounded : Icons.send_rounded,
+                      size: 16,
+                    ),
+              label: Text(
+                _sent
+                    ? (inProgress ? 'End OTP sent — send again' : 'Start OTP sent — send again')
+                    : (inProgress
+                        ? 'Send End OTP in chat'
+                        : 'Send Start OTP in chat'),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: accent,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+          ),
+          const Gap(6),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: () => context.push(
+                AppRoutes.chatFor(task.id, title: task.title),
+              ),
+              child: const Text('Open chat'),
             ),
           ),
         ],
@@ -1723,4 +2435,89 @@ class _EmptyTasksCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _HomeMapPin extends StatelessWidget {
+  const _HomeMapPin({required this.label});
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: AppColors.helperAccent,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 2.5),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.18),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Center(
+            child: Text(
+              label.isNotEmpty ? label[0].toUpperCase() : '?',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ),
+        const Gap(4),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.92),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            label.split(' ').first,
+            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _HomeNearbyMapPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final road = Paint()
+      ..color = Colors.white.withValues(alpha: 0.8)
+      ..strokeWidth = 9
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    for (var i = 1; i < 6; i++) {
+      final y = size.height * (i / 7);
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), road);
+      final x = size.width * (i / 6);
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), road);
+    }
+    final route = Paint()
+      ..color = const Color(0xFF1B8A4A)
+      ..strokeWidth = 4
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    final path = Path()
+      ..moveTo(size.width * 0.15, size.height * 0.7)
+      ..quadraticBezierTo(
+        size.width * 0.45,
+        size.height * 0.55,
+        size.width * 0.7,
+        size.height * 0.35,
+      );
+    canvas.drawPath(path, route);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

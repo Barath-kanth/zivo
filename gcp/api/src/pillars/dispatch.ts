@@ -5,6 +5,7 @@ import {
   createTask,
   getUser,
   listLiveHelpersNearby,
+  attachMatchExplanation,
   requiresNeighborVouch,
   type LiveHelper,
   type TaskRow,
@@ -108,6 +109,8 @@ export async function instantDispatch(input: DispatchInput): Promise<DispatchRes
     input.lon,
     WALK_RADIUS_KM,
   );
+  // Never dispatch the posting client to themselves.
+  candidates = candidates.filter((c) => c.id !== input.clientId);
   // Pillar 4 — inside-home categories only match Neighbor-Vouched helpers.
   if (requiresNeighborVouch(input.category)) {
     const filtered: LiveHelper[] = [];
@@ -181,7 +184,22 @@ export async function instantDispatch(input: DispatchInput): Promise<DispatchRes
     location_label: 'Instant dispatch pin',
   });
 
-  const matched = await acceptTask(task.id, pick.id);
+  let matched = await acceptTask(task.id, pick.id);
+  const explanation =
+    `${pick.explanation} Price LKR ${labor} (non-negotiable).`;
+  try {
+    matched = await attachMatchExplanation(matched, {
+      explanation,
+      reasons: [
+        selected ? `${selected.distance_km.toFixed(2)} km away` : 'Nearby',
+        'Instant Dispatch',
+        'KYC verified',
+      ],
+      mode: 'dispatch',
+    });
+  } catch {
+    /* best-effort */
+  }
 
   let batch: BatchWindow | undefined;
   try {
@@ -201,7 +219,7 @@ export async function instantDispatch(input: DispatchInput): Promise<DispatchRes
     candidates,
     selected_helper_id: pick.id,
     selected_helper_name: selected?.full_name,
-    explanation: `${pick.explanation} Price LKR ${labor} (non-negotiable).` +
+    explanation: explanation +
       (batch
         ? ` Street batch open ${Math.round((new Date(batch.expires_at).getTime() - Date.now()) / 1000)}s for neighbors.`
         : ''),

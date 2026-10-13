@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hyperlocal/data/models/task.dart';
+import 'package:hyperlocal/ui/_shared/category_icon.dart';
 import 'package:hyperlocal/ui/_shared/glass_dock.dart';
 import 'package:hyperlocal/ui/_shared/zivo_launch.dart';
 
@@ -69,5 +71,21 @@ void main() {
     await tester.pumpWidget(host(dock, highContrast: true));
     expect(find.byType(BackdropFilter), findsNothing);
     expect(find.text('Navigation'), findsOneWidget);
+  });
+
+  testWidgets('category badges render bundled 3d icon assets', (tester) async {
+    await tester.pumpWidget(host(
+      Scaffold(
+        body: SingleChildScrollView(
+          child: Column(
+            children: TaskCategory.values
+                .map((c) => CategoryIconBadge(c, size: 40))
+                .toList(),
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byType(Image), findsNWidgets(TaskCategory.values.length));
   });
 }

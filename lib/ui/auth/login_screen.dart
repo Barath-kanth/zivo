@@ -11,13 +11,15 @@ import 'package:hyperlocal/core/constants/app_config.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/router/app_router.dart';
 import 'package:hyperlocal/core/utils/phone_utils.dart';
+import 'package:hyperlocal/ui/_shared/a11y_widgets.dart';
 import 'package:hyperlocal/ui/_shared/zivo_logo.dart';
 
 /// Phone-first login (free OTP) + Google; email under "More options".
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key, this.returnTo});
+  const LoginScreen({super.key, this.returnTo, this.initialSignUp = false});
 
   final String? returnTo;
+  final bool initialSignUp;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -33,8 +35,8 @@ class _LoginScreenState extends State<LoginScreen> {
   final _nameCtrl = TextEditingController();
   final _usernameCtrl = TextEditingController();
 
-  bool _showEmail = false;
-  bool _isSignUp = false;
+  late bool _showEmail = widget.initialSignUp;
+  late bool _isSignUp = widget.initialSignUp;
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
   bool _busy = false;
@@ -187,11 +189,29 @@ class _LoginScreenState extends State<LoginScreen> {
                             Align(
                               alignment: Alignment.centerLeft,
                               child: IconButton(
-                                onPressed: () => context.go(AppRoutes.shell),
-                                icon: const Icon(Icons.close_rounded),
-                                tooltip: 'Continue browsing',
+                                onPressed: () {
+                                  final returnTo = _returnTo;
+                                  final q = returnTo == null || returnTo.isEmpty
+                                      ? null
+                                      : {'returnTo': returnTo};
+                                  context.go(Uri(
+                                    path: AppRoutes.login,
+                                    queryParameters: q,
+                                  ).toString());
+                                },
+                                icon: const Icon(Icons.arrow_back_rounded),
+                                tooltip: 'Back to welcome',
                               ),
                             ),
+                            A11yAuthBar(
+                              readText: _isSignUp
+                                  ? 'Create a Zivo account. Enter your mobile number for a free OTP, or use email signup with name and password.'
+                                  : 'Sign in to Zivo. Enter your Sri Lanka mobile number for a free OTP, or use email and password.',
+                              hint: _isSignUp
+                                  ? 'Zivo signup screen — phone OTP or email register'
+                                  : 'Zivo login screen — phone OTP or email sign-in',
+                            ),
+                            const Gap(12),
                             if (!wide) ...[
                               const Center(
                                 child: ZivoLogo(
