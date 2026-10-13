@@ -1,3 +1,7 @@
+import 'package:hyperlocal/ui/_shared/shell_route_content.dart';
+import 'package:hyperlocal/ui/_shared/desktop_sidebar.dart';
+import 'package:hyperlocal/ui/_shared/glass_dock.dart';
+import 'package:hyperlocal/ui/_shared/app_viewport.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
@@ -105,26 +109,27 @@ class _ShellScreenState extends State<ShellScreen> {
           final path = GoRouterState.of(context).uri.path;
           final selectedIndex = _calculateSelectedIndex(isHelper, path);
 
+          final desktop = MediaQuery.sizeOf(context).width >= 1100;
           return Scaffold(
-            extendBody: true,
-            body: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 400),
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeInCubic,
-              transitionBuilder: (child, animation) => FadeTransition(
-                opacity: animation,
-                child: SlideTransition(
-                  position: Tween<Offset>(
-                    begin: const Offset(0, 0.04),
-                    end: Offset.zero,
-                  ).animate(animation),
-                  child: child,
+            extendBody: !desktop,
+            body: Row(
+              children: [
+                desktop ? DesktopSidebar(
+                  isHelper: isHelper,
+                  selectedIndex: selectedIndex,
+                  destinations: _navigationItems(isHelper),
+                  onDestinationSelected: (index) => _onNavTap(index, isHelper),
+                ) : const SizedBox.shrink(),
+                Expanded(
+                  child: AppViewport(
+                    child: _buildBodyContent(isHelper, widget.child),
+                  ),
                 ),
-              ),
-              child: _buildBodyContent(isHelper, widget.child),
+              ],
             ),
-            bottomNavigationBar:
-                _buildBottomNav(isHelper, modeState, selectedIndex),
+            bottomNavigationBar: desktop || MediaQuery.viewInsetsOf(context).bottom > 0
+                ? null
+                : _buildBottomNav(isHelper, modeState, selectedIndex),
           );
         },
       ),
@@ -132,96 +137,95 @@ class _ShellScreenState extends State<ShellScreen> {
   }
 
   Widget _buildBodyContent(bool isHelper, Widget child) {
-    // Determine if we are on the root route using GoRouterState
-    final path = GoRouterState.of(context).uri.path;
-    if (path == '/') {
-      return isHelper
-          ? const HelperHomeScreen(key: ValueKey('helper'))
-          : const ClientHomeScreen(key: ValueKey('client'));
-    }
-    // Otherwise, render the pushed child (e.g. WalletScreen, ActiveJob)
-    return child;
+    final isHome = GoRouterState.of(context).uri.path == AppRoutes.shell;
+    return ShellRouteContent(
+      isHome: isHome,
+      routedChild: child,
+      home: isHome
+          ? (isHelper
+              ? const HelperHomeScreen(key: ValueKey('helper'))
+              : const ClientHomeScreen(key: ValueKey('client')))
+          : null,
+    );
   }
 
-  Widget _buildBottomNav(bool isHelper, ModeState modeState, int selectedIndex) {
-    final items = isHelper
+  List<AppNavDestination> _navigationItems(bool isHelper) => isHelper
         ? [
-            const _NavItem(icon: Icons.map_outlined, activeIcon: Icons.map, label: 'Jobs'),
-            const _NavItem(icon: Icons.work_outline, activeIcon: Icons.work, label: 'Active'),
-            const _NavItem(icon: Icons.account_balance_wallet_outlined, activeIcon: Icons.account_balance_wallet, label: 'Earnings'),
-            const _NavItem(icon: Icons.person_outline, activeIcon: Icons.person, label: 'Account'),
+            const AppNavDestination(icon: Icons.map_outlined, activeIcon: Icons.map, label: 'Jobs'),
+            const AppNavDestination(icon: Icons.work_outline, activeIcon: Icons.work, label: 'Active'),
+            const AppNavDestination(icon: Icons.account_balance_wallet_outlined, activeIcon: Icons.account_balance_wallet, label: 'Earnings'),
+            const AppNavDestination(icon: Icons.person_outline, activeIcon: Icons.person, label: 'Account'),
           ]
         : [
-            const _NavItem(icon: Icons.home_outlined, activeIcon: Icons.home_rounded, label: 'Home'),
-            const _NavItem(icon: Icons.add_circle_outline, activeIcon: Icons.add_circle, label: 'Post'),
-            const _NavItem(icon: Icons.account_balance_wallet_outlined, activeIcon: Icons.account_balance_wallet, label: 'Wallet'),
-            const _NavItem(icon: Icons.person_outline, activeIcon: Icons.person, label: 'Account'),
+            const AppNavDestination(icon: Icons.home_outlined, activeIcon: Icons.home_rounded, label: 'Home'),
+            const AppNavDestination(icon: Icons.add_circle_outline, activeIcon: Icons.add_circle, label: 'Post'),
+            const AppNavDestination(icon: Icons.account_balance_wallet_outlined, activeIcon: Icons.account_balance_wallet, label: 'Wallet'),
+            const AppNavDestination(icon: Icons.person_outline, activeIcon: Icons.person, label: 'Account'),
           ];
 
-    final accentColor = isHelper ? AppColors.helperAccent : AppColors.accent;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surfaceDark,
-        border: const Border(top: BorderSide(color: AppColors.borderColor)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.3),
-            blurRadius: 20,
-            offset: const Offset(0, -4),
-          ),
-        ],
-      ),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          child: Row(
-            children: [
-              // Navigation items
-              ...List.generate(items.length, (i) {
-                final item = items[i];
-                final isSelected = selectedIndex == i;
-                return Expanded(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => _onNavTap(i, isHelper),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      decoration: isSelected ? BoxDecoration(
-                        color: accentColor.withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(12),
-                      ) : null,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            isSelected ? item.activeIcon : item.icon,
-                            color: isSelected ? accentColor : AppColors.textMuted,
-                            size: 22,
+  Widget _buildBottomNav(bool isHelper, ModeState modeState, int selectedIndex) {
+    final items = _navigationItems(isHelper);
+    final reducedMotion = MediaQuery.disableAnimationsOf(context);
+    return GlassDock(
+      child: Row(
+        children: [
+          ...List.generate(items.length, (i) {
+            final item = items[i];
+            final isSelected = selectedIndex == i;
+            return Expanded(
+              child: Semantics(
+                selected: isSelected,
+                button: true,
+                label: item.label,
+                child: Tooltip(
+                  message: item.label,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(22),
+                      onTap: () => _onNavTap(i, isHelper),
+                      child: AnimatedContainer(
+                        duration: reducedMotion ? Duration.zero
+                            : const Duration(milliseconds: 220),
+                        curve: Curves.easeOutCubic,
+                        constraints: const BoxConstraints(minHeight: 56),
+                        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
+                        decoration: BoxDecoration(
+                          color: isSelected ? AppColors.glassSelection : Colors.transparent,
+                          borderRadius: BorderRadius.circular(22),
+                        ),
+                        child: ExcludeSemantics(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(isSelected ? item.activeIcon : item.icon,
+                                color: isSelected ? AppColors.textPrimary : AppColors.textSecondary,
+                                size: 23),
+                              const SizedBox(height: 4),
+                              Text(item.label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: AppTextStyles.bodySmall.copyWith(
+                                  color: isSelected ? AppColors.textPrimary : AppColors.textSecondary,
+                                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                  fontSize: 11,
+                                  height: 1.2,
+                                  letterSpacing: -0.15,
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            item.label,
-                            style: AppTextStyles.bodySmall.copyWith(
-                              color: isSelected ? accentColor : AppColors.textMuted,
-                              fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                              fontSize: 10,
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
-                );
-              }),
-
-              // Mode Toggle
-              const SizedBox(width: 8),
-              ModeToggleWidget(isHelper: isHelper),
-            ],
-          ),
-        ),
+                ),
+              ),
+            );
+          }),
+          const SizedBox(width: 6),
+          ModeToggleWidget(isHelper: isHelper),
+        ],
       ),
     );
   }
@@ -282,15 +286,4 @@ class _ShellScreenState extends State<ShellScreen> {
       }
     }
   }
-}
-
-class _NavItem {
-  const _NavItem({
-    required this.icon,
-    required this.activeIcon,
-    required this.label,
-  });
-  final IconData icon;
-  final IconData activeIcon;
-  final String label;
 }

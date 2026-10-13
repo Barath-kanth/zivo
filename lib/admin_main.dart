@@ -7,8 +7,7 @@ import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
 import 'package:hyperlocal/core/constants/app_brand.dart';
-import 'package:hyperlocal/core/constants/app_colors.dart';
-import 'package:hyperlocal/core/constants/app_text_styles.dart';
+import 'package:hyperlocal/core/constants/app_theme.dart';
 import 'package:hyperlocal/core/services/auth_service.dart';
 import 'package:hyperlocal/core/services/gcp/gcp_api_client.dart';
 import 'package:hyperlocal/core/services/kyc/kyc_verifier.dart';
@@ -89,14 +88,7 @@ class ZivoAdminApp extends StatelessWidget {
     return MaterialApp.router(
       title: '${AppBrand.name} Admin',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: AppColors.accent,
-          brightness: Brightness.light,
-        ),
-        textTheme: AppTextStyles.textTheme,
-      ),
+      theme: AppTheme.light,
       routerConfig: router,
     );
   }

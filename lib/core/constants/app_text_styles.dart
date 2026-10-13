@@ -1,7 +1,9 @@
+import 'dart:ui' show FontFeature;
 import 'package:flutter/material.dart';
 import 'app_colors.dart';
 
-/// Typography design tokens using Inter font.
+/// Transit-inspired typography using the bundled Inter family.
+/// Display: compact bold. Text: natural spacing and a legible line height.
 abstract class AppTextStyles {
   AppTextStyles._();
 
@@ -9,9 +11,9 @@ abstract class AppTextStyles {
   static const TextStyle displayLarge = TextStyle(
     fontFamily: 'Inter',
     fontSize: 40,
-    fontWeight: FontWeight.w800,
+    fontWeight: FontWeight.w700,
     color: AppColors.textPrimary,
-    letterSpacing: -1.5,
+    letterSpacing: -1.1,
     height: 1.1,
   );
 
@@ -20,7 +22,7 @@ abstract class AppTextStyles {
     fontSize: 32,
     fontWeight: FontWeight.w700,
     color: AppColors.textPrimary,
-    letterSpacing: -1.0,
+    letterSpacing: -0.8,
     height: 1.2,
   );
 
@@ -57,7 +59,7 @@ abstract class AppTextStyles {
     fontSize: 16,
     fontWeight: FontWeight.w400,
     color: AppColors.textPrimary,
-    height: 1.6,
+    height: 1.45,
   );
 
   static const TextStyle bodyMedium = TextStyle(
@@ -70,7 +72,7 @@ abstract class AppTextStyles {
 
   static const TextStyle bodySmall = TextStyle(
     fontFamily: 'Inter',
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: FontWeight.w400,
     color: AppColors.textMuted,
     height: 1.5,
@@ -87,27 +89,27 @@ abstract class AppTextStyles {
 
   static const TextStyle labelSmall = TextStyle(
     fontFamily: 'Inter',
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: FontWeight.w500,
     color: AppColors.textMuted,
-    letterSpacing: 0.8,
+    letterSpacing: 0.4,
   );
 
   static const TextStyle capsLabel = TextStyle(
     fontFamily: 'Inter',
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: FontWeight.w600,
     color: AppColors.textMuted,
-    letterSpacing: 1.2,
+    letterSpacing: 0.8,
   );
 
   // ── Special ───────────────────────────────────────────────────────────
   static const TextStyle buttonLabel = TextStyle(
     fontFamily: 'Inter',
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: FontWeight.w600,
     color: Colors.white,
-    letterSpacing: 0.2,
+    letterSpacing: 0.0,
   );
 
   static const TextStyle otpDigit = TextStyle(
@@ -119,14 +121,16 @@ abstract class AppTextStyles {
   );
 
   static const TextStyle moneyLarge = TextStyle(
+    fontFeatures: [FontFeature.tabularFigures()],
     fontFamily: 'Inter',
     fontSize: 36,
-    fontWeight: FontWeight.w800,
+    fontWeight: FontWeight.w700,
     color: AppColors.textPrimary,
-    letterSpacing: -1.0,
+    letterSpacing: -0.8,
   );
 
   static const TextStyle moneyMedium = TextStyle(
+    fontFeatures: [FontFeature.tabularFigures()],
     fontFamily: 'Inter',
     fontSize: 20,
     fontWeight: FontWeight.w700,
@@ -136,7 +140,7 @@ abstract class AppTextStyles {
 
   static const TextStyle distanceBadge = TextStyle(
     fontFamily: 'Inter',
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: FontWeight.w600,
     color: AppColors.accent,
     letterSpacing: 0.3,
@@ -146,6 +150,10 @@ abstract class AppTextStyles {
   static TextTheme get textTheme => const TextTheme(
     displayLarge:  displayLarge,
     displayMedium: displayMedium,
+    titleLarge: headingMedium,
+    titleMedium: headingSmall,
+    titleSmall: labelLarge,
+    labelMedium: labelLarge,
     headlineLarge: headingLarge,
     headlineMedium: headingMedium,
     headlineSmall: headingSmall,

@@ -13,9 +13,9 @@ class TaskStatusBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: status.color.withOpacity(0.15),
+        color: status.color.withOpacity(0.08),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: status.color.withOpacity(0.4)),
+        border: Border.all(color: status.color.withOpacity(0.12)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

@@ -113,10 +113,10 @@ class _WalletScreenState extends State<WalletScreen> {
         padding: const EdgeInsets.all(22),
         decoration: BoxDecoration(
           gradient: AppColors.accentGradient,
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: AppColors.accent.withValues(alpha: 0.35),
+              color: AppColors.accent.withValues(alpha: 0.04),
               blurRadius: 24,
               offset: const Offset(0, 10),
             ),
@@ -425,16 +425,19 @@ class _MiniStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
+    return Expanded(
+      child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
             Icon(icon, color: color, size: 12),
             const Gap(4),
-            Text(label,
+            Flexible(
+              child: Text(label,
                 style: AppTextStyles.bodySmall
-                    .copyWith(color: Colors.white60, fontSize: 10)),
+                    .copyWith(color: Colors.white70, fontSize: 12)),
+            ),
           ],
         ),
         const Gap(2),
@@ -442,6 +445,7 @@ class _MiniStat extends StatelessWidget {
             style: AppTextStyles.headingSmall
                 .copyWith(color: Colors.white, fontSize: 13)),
       ],
+      ),
     );
   }
 }

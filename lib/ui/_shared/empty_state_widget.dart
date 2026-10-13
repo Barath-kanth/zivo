@@ -35,11 +35,11 @@ class EmptyStateWidget extends StatelessWidget {
               height: 80,
               decoration: BoxDecoration(
                 color: color.withOpacity(0.08),
-                shape: BoxShape.circle,
+                borderRadius: BorderRadius.circular(20),
               ),
               child: Icon(icon, size: 36, color: color.withOpacity(0.7)),
             ).animate()
-                .scale(duration: 500.ms, curve: Curves.elasticOut)
+                .scale(duration: 500.ms, curve: Curves.easeOutCubic)
                 .fadeIn(duration: 300.ms),
             const Gap(20),
             Text(

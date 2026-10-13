@@ -1,3 +1,4 @@
+import 'package:hyperlocal/ui/_shared/category_icon.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -137,19 +138,64 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.backgroundDark,
-      body: CustomScrollView(
-        slivers: [
-          _buildHeader(),
-          _buildSearchBar(),
-          _buildInstantDispatchCard(),
-          _buildStreetBatchCard(),
-          _buildNeighborVouchCard(),
-          _buildSectionTitle('What do you need help with?'),
-          _buildCategoryGrid(),
-          _buildSectionTitle('Your Active Requests'),
-          _buildMyTasks(),
-          const SliverToBoxAdapter(child: Gap(100)),
-        ],
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth >= 900) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: CustomScrollView(
+                    key: const PageStorageKey('client-desktop-services'),
+                    slivers: [
+                      _buildHeader(),
+                      _buildSearchBar(),
+                      _buildSectionTitle('What do you need help with?'),
+                      _buildCategoryGrid(),
+                      const SliverToBoxAdapter(child: Gap(100)),
+                    ],
+                  ),
+                ),
+                Container(
+                  width: 320,
+                  decoration: const BoxDecoration(
+                    color: AppColors.surfaceDark,
+                    border: Border(left: BorderSide(color: AppColors.borderColor)),
+                  ),
+                  child: SafeArea(
+                    child: CustomScrollView(
+                      key: const PageStorageKey('client-desktop-activity'),
+                      slivers: [
+                        _buildSectionTitle('Your Active Requests'),
+                        _buildMyTasks(),
+                        _buildSectionTitle('Around your neighbourhood'),
+                        _buildInstantDispatchCard(),
+                        _buildStreetBatchCard(),
+                        _buildNeighborVouchCard(),
+                        const SliverToBoxAdapter(child: Gap(100)),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            );
+          }
+          return CustomScrollView(
+            key: const PageStorageKey('client-mobile-home'),
+            slivers: [
+              _buildHeader(),
+              _buildSearchBar(),
+              _buildInstantDispatchCard(),
+              _buildStreetBatchCard(),
+              _buildNeighborVouchCard(),
+              _buildSectionTitle('What do you need help with?'),
+              _buildCategoryGrid(),
+              _buildSectionTitle('Your Active Requests'),
+              _buildMyTasks(),
+              const SliverToBoxAdapter(child: Gap(100)),
+            ],
+          );
+        },
       ),
       floatingActionButton: _buildPostTaskFAB(),
     );
@@ -158,45 +204,13 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   Widget _buildHeader() {
     return SliverToBoxAdapter(
       child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF0A0A0A), Color(0xFF1A1A1A), Color(0xFF111111)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            stops: [0.0, 0.55, 1.0],
-          ),
-        ),
+        decoration: const BoxDecoration(color: AppColors.backgroundDark),
         child: Stack(
           children: [
-            // Soft atmosphere — white only (Uber black/white base)
-            Positioned(
-              top: -40,
-              right: -30,
-              child: Container(
-                width: 160,
-                height: 160,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white.withValues(alpha: 0.06),
-                ),
-              ),
-            ),
-            Positioned(
-              bottom: 20,
-              left: -50,
-              child: Container(
-                width: 120,
-                height: 120,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white.withValues(alpha: 0.04),
-                ),
-              ),
-            ),
             SafeArea(
               bottom: false,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
                 child: BlocBuilder<AuthBloc, AuthState>(
                   builder: (context, state) {
                     final profile =
@@ -211,7 +225,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
 
                     return Center(
                       child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 560),
+                        constraints: const BoxConstraints(maxWidth: 1080),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
@@ -221,12 +235,12 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                 const ZivoLogo(
                                   size: 34,
                                   showWordmark: true,
-                                  markOnDark: true,
-                                  wordmarkColor: Colors.white,
+                                  markOnDark: false,
+                                  wordmarkColor: AppColors.textPrimary,
                                 ),
                                 const Spacer(),
                                 Material(
-                                  color: Colors.white.withValues(alpha: 0.12),
+                                  color: AppColors.surfaceDark,
                                   borderRadius: BorderRadius.circular(28),
                                   child: InkWell(
                                     onTap: () =>
@@ -257,20 +271,24 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                                   ),
                                           ),
                                           const Gap(8),
-                                          Text(
+                                          ConstrainedBox(
+                                            constraints: const BoxConstraints(maxWidth: 110),
+                                            child: Text(
                                             name,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
                                             style: AppTextStyles.bodySmall
                                                 .copyWith(
-                                              color: Colors.white,
+                                              color: AppColors.textPrimary,
                                               fontWeight: FontWeight.w600,
                                             ),
+                                          ),
                                           ),
                                           const Gap(2),
                                           Icon(
                                             Icons.keyboard_arrow_down_rounded,
                                             size: 18,
-                                            color: Colors.white
-                                                .withValues(alpha: 0.7),
+                                            color: AppColors.textSecondary,
                                           ),
                                         ],
                                       ),
@@ -283,15 +301,15 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                 .fadeIn(duration: 400.ms)
                                 .slideY(
                                     begin: -0.15, curve: Curves.easeOut),
-                            const Gap(32),
-                            // Centered hero
+                            const Gap(28),
+                            // Primary service heading
                             Text(
                               'Who can help\nyou today?',
-                              textAlign: TextAlign.center,
+                              textAlign: TextAlign.left,
                               style: AppTextStyles.displayMedium.copyWith(
-                                color: Colors.white,
-                                fontSize: 34,
-                                height: 1.05,
+                                color: AppColors.textPrimary,
+                                fontSize: 32,
+                                height: 1.15,
                                 letterSpacing: -1.2,
                                 fontWeight: FontWeight.w800,
                               ),
@@ -304,16 +322,16 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                             const Gap(12),
                             Text(
                               'Trusted help nearby — queues, chores, care.',
-                              textAlign: TextAlign.center,
+                              textAlign: TextAlign.left,
                               style: AppTextStyles.bodyMedium.copyWith(
-                                color: Colors.white.withValues(alpha: 0.65),
+                                color: AppColors.textSecondary,
                                 fontSize: 14,
                               ),
                             )
                                 .animate()
                                 .fadeIn(delay: 160.ms, duration: 400.ms),
                             const Gap(24),
-                            // Centered action tiles
+                            // Existing account shortcuts
                             Row(
                               children: [
                                 Expanded(
@@ -321,7 +339,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                     icon: Icons.handshake_outlined,
                                     label: 'Earn',
                                     sublabel: 'Helper',
-                                    accent: AppColors.helperAccent,
+                                    accent: AppColors.accent,
                                     onTap: () {
                                       final mode = context.read<ModeCubit>();
                                       if (mode.state is! ModeToggling) {
@@ -338,7 +356,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                     label: 'Wallet',
                                     sublabel:
                                         '$currency ${wallet.toStringAsFixed(0)}',
-                                    accent: AppColors.helperAccent,
+                                    accent: AppColors.accent,
                                     onTap: () =>
                                         context.go(AppRoutes.wallet),
                                   ),
@@ -349,7 +367,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                     icon: Icons.person_outline_rounded,
                                     label: 'Account',
                                     sublabel: 'Profile',
-                                    accent: AppColors.helperAccent,
+                                    accent: AppColors.accent,
                                     onTap: () =>
                                         context.go(AppRoutes.account),
                                   ),
@@ -383,7 +401,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     required VoidCallback onTap,
   }) {
     return Material(
-      color: Colors.white.withValues(alpha: 0.08),
+      color: AppColors.surfaceDark,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         onTap: onTap,
@@ -393,27 +411,27 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: Colors.white.withValues(alpha: 0.1),
+              color: AppColors.surfaceDark,
             ),
           ),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: accent.withValues(alpha: 0.18),
+                  color: Colors.white,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(icon, size: 20, color: accent),
               ),
-              const Gap(12),
+              const Gap(8),
               Text(
                 label,
-                textAlign: TextAlign.center,
+                textAlign: TextAlign.left,
                 style: AppTextStyles.bodyMedium.copyWith(
-                  color: Colors.white,
+                  color: AppColors.textPrimary,
                   fontWeight: FontWeight.w700,
                   fontSize: 14,
                 ),
@@ -421,11 +439,11 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               const Gap(2),
               Text(
                 sublabel,
-                textAlign: TextAlign.center,
+                textAlign: TextAlign.left,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: AppTextStyles.bodySmall.copyWith(
-                  color: Colors.white.withValues(alpha: 0.5),
+                  color: AppColors.textSecondary,
                   fontSize: 11,
                 ),
               ),
@@ -464,12 +482,17 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                 const Icon(Icons.search_rounded,
                     color: AppColors.textMuted, size: 20),
                 const Gap(10),
-                Text(
-                  'Describe what you need help with…',
-                  style: AppTextStyles.bodyMedium.copyWith(
-                      color: AppColors.textMuted),
+                Expanded(
+                  child: Text(
+                    'Describe what you need help with…',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTextStyles.bodyLarge.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
-                const Spacer(),
+                const Gap(12),
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -505,7 +528,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.accent.withValues(alpha: 0.35)),
+                border: Border.all(color: AppColors.borderColor),
               ),
               child: Row(
                 children: [
@@ -1269,8 +1292,8 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   Widget _buildSectionTitle(String title) {
     return SliverToBoxAdapter(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
-        child: Text(title, style: AppTextStyles.headingSmall),
+        padding: const EdgeInsets.fromLTRB(20, 28, 20, 14),
+        child: Text(title, style: AppTextStyles.headingMedium),
       ),
     );
   }
@@ -1282,7 +1305,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
       sliver: SliverGrid(
         gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
           maxCrossAxisExtent: 140,
-          childAspectRatio: 1.25,
+          mainAxisExtent: 148,
           crossAxisSpacing: 10,
           mainAxisSpacing: 10,
         ),
@@ -1373,7 +1396,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
         'Post a Task',
         style: AppTextStyles.buttonLabel.copyWith(color: Colors.white),
       ),
-      elevation: 6,
+      elevation: 0,
     );
   }
 }
@@ -1395,42 +1418,35 @@ class _CategoryTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: AppColors.cardDark,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              category.emoji,
-              style: const TextStyle(fontSize: 28),
-            ),
-            const Gap(6),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Text(
+    return Material(
+      color: AppColors.cardDark,
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CategoryIconBadge(category, size: 52),
+              const Spacer(),
+              Text(
                 category.displayName,
                 style: AppTextStyles.bodySmall.copyWith(
                   color: AppColors.textPrimary,
-                  fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  height: 1.2,
+                  height: 1.25,
                 ),
-                textAlign: TextAlign.center,
                 maxLines: 2,
+                overflow: TextOverflow.ellipsis,
               ),
-            ),
-          ],
+            ],
+          ),
         ),
-      )
-          .animate(delay: Duration(milliseconds: 30 * index))
-          .fadeIn(duration: 300.ms)
-          .scale(begin: const Offset(0.85, 0.85)),
-    );
+      ),
+    ).animate(delay: Duration(milliseconds: 15 * index))
+      .fadeIn(duration: 220.ms);
   }
 }
 
@@ -1491,15 +1507,17 @@ class _ClientTaskCard extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  Text(task.category.emoji,
-                      style: const TextStyle(fontSize: 16)),
+                  CategoryIcon(task.category, size: 16),
                   const Gap(8),
-                  Text(
+                  Expanded(child: Text(
                     task.category.displayName.toUpperCase(),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: AppTextStyles.capsLabel.copyWith(
                         color: color, fontSize: 10, letterSpacing: 1.0),
                   ),
-                  const Spacer(),
+                  ),
+                  const Gap(8),
                   TaskStatusBadge(status: task.status),
                 ],
               ),
@@ -1536,42 +1554,37 @@ class _ClientTaskCard extends StatelessWidget {
                     ),
                   ],
                   const Gap(12),
-                  Row(
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 8,
                     children: [
-                      _Chip(
-                        icon: Icons.schedule_outlined,
-                        label: '${task.estimatedHours}h',
-                        color: color,
-                      ),
-                      const Gap(8),
-                      _Chip(
-                        icon: Icons.payments_outlined,
-                        label:
-                            'LKR ${task.hourlyRate.toStringAsFixed(2)}/hr  •  LKR ${task.totalAmount.toStringAsFixed(2)} total',
-                        color: color,
-                      ),
-                      const Spacer(),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: task.status == TaskStatus.open
-                              ? AppColors.helperAccent
-                              : AppColors.accent,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          task.status == TaskStatus.open
-                              ? 'Review Applicants'
-                              : 'Track',
-                          style: AppTextStyles.capsLabel.copyWith(
-                              color: Colors.white,
-                              letterSpacing: 0.5,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold),
-                        ),
-                      ),
+                      _Chip(icon: Icons.schedule_outlined,
+                        label: '${task.estimatedHours}h', color: color),
+                      _Chip(icon: Icons.payments_outlined,
+                        label: 'LKR ${task.hourlyRate.toStringAsFixed(2)}/hr',
+                        color: color),
+                      _Chip(icon: Icons.receipt_long_outlined,
+                        label: 'LKR ${task.totalAmount.toStringAsFixed(2)} total',
+                        color: color),
                     ],
+                  ),
+                  const Gap(12),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: task.status == TaskStatus.open
+                            ? AppColors.helperAccent : AppColors.accent,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        task.status == TaskStatus.open ? 'Review Applicants' : 'Track',
+                        style: AppTextStyles.capsLabel.copyWith(
+                          color: Colors.white, letterSpacing: 0.5,
+                          fontSize: 10, fontWeight: FontWeight.bold),
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -1672,9 +1685,9 @@ class _Chip extends StatelessWidget {
       children: [
         Icon(icon, size: 12, color: color),
         const Gap(4),
-        Text(label,
+        Flexible(child: Text(label,
             style: AppTextStyles.bodySmall.copyWith(
-                color: AppColors.textSecondary, fontSize: 11)),
+                color: AppColors.textSecondary, fontSize: 11))),
       ],
     );
   }

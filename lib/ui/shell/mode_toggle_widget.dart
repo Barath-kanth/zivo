@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
 import 'package:hyperlocal/blocs/mode/mode_cubit.dart';
@@ -21,28 +20,21 @@ class ModeToggleWidget extends StatelessWidget {
       builder: (context, state) {
         final isToggling = state is ModeToggling;
 
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: isToggling ? null : () => _onToggle(context),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 350),
-            curve: Curves.easeOutCubic,
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              gradient: isHelper
-                  ? AppColors.helperGradient
-                  : AppColors.accentGradient,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: (isHelper ? AppColors.helperAccent : AppColors.accent)
-                      .withOpacity(0.4),
-                  blurRadius: 12,
-                  spreadRadius: 2,
-                ),
-              ],
-            ),
+        return Semantics(
+          button: true,
+          enabled: !isToggling,
+          label: isHelper ? 'Switch to Client mode' : 'Switch to Helper mode',
+          child: Tooltip(
+            message: isHelper ? 'Switch to Client mode' : 'Switch to Helper mode',
+            child: Material(
+              color: AppColors.accent,
+              borderRadius: BorderRadius.circular(22),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: isToggling ? null : () => _onToggle(context),
+                child: SizedBox(
+                  width: 56,
+                  height: 56,
             child: isToggling
                 ? const Center(
                     child: SizedBox(
@@ -66,17 +58,22 @@ class ModeToggleWidget extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        isHelper ? 'CLIENT' : 'HELPER',
+                        isHelper ? 'Client' : 'Helper',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontFamily: 'Inter',
-                          fontSize: 7.5,
+                          fontSize: 10,
                           fontWeight: FontWeight.w700,
                           color: Colors.white,
-                          letterSpacing: 0.5,
+                          letterSpacing: 0,
                         ),
                       ),
                     ],
-                  ).animate().fadeIn(duration: 200.ms),
+                  ),
+                ),
+              ),
+            ),
           ),
         );
       },

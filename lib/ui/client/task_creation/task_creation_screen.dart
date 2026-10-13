@@ -1,3 +1,5 @@
+import 'category_task_guide.dart';
+import 'package:hyperlocal/ui/_shared/category_icon.dart';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -34,6 +36,10 @@ class TaskCreationScreen extends StatefulWidget {
 
 class _TaskCreationScreenState extends State<TaskCreationScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _pricingFormKey = GlobalKey<FormState>();
+  String? _selectedService;
+  int _fieldsRequestId = 0;
+  int _quoteRequestId = 0;
   final _titleCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
   final _locationLabelCtrl = TextEditingController();
@@ -194,22 +200,31 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
 
   Future<void> _loadPricingFields() async {
     final desc = _descCtrl.text.trim();
-    if (desc.length < 20 || _selectedCategory == null) return;
+    final category = _selectedCategory;
+    if (desc.length < 20 || category == null) return;
+    final requestId = ++_fieldsRequestId;
     setState(() => _fieldsLoading = true);
     try {
       final res = await context.read<TaskRepository>().pricingFields(
             title: _titleCtrl.text.trim(),
             description: desc,
-            category: _selectedCategory!.name,
+            category: category.name,
           );
-      if (!mounted) return;
-      final fields = ((res['fields'] as List?) ?? const [])
+      if (!mounted || requestId != _fieldsRequestId || category != _selectedCategory) return;
+      var fields = ((res['fields'] as List?) ?? const [])
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
-      for (final c in _fieldCtrls.values) {
-        c.dispose();
+      // Mock responses previously had generic and keyword-matched questions.
+      // Keep live task-specific questions; supply a category-specific fallback.
+      if (res['mode'] != 'gemini' || res['category'] != category.name || fields.isEmpty) {
+        fields = CategoryTaskGuide.fallbackFields(category);
       }
+      fields = fields.where((f) => f['id'] != 'effort_level').toList();
+      final retiredControllers = _fieldCtrls.values.toList();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        for (final controller in retiredControllers) { controller.dispose(); }
+      });
       _fieldCtrls.clear();
       _fieldValues.clear();
       for (final f in fields) {
@@ -223,8 +238,9 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
           _fieldValues[id] =
               DateTime.now().add(const Duration(hours: 24));
         } else if (type == 'select') {
-          _fieldValues[id] = def?.toString() ??
-              ((f['options'] as List?)?.first?.toString() ?? '');
+          final options = ((f['options'] as List?) ?? const [])
+              .map((e) => e.toString()).toSet();
+          _fieldValues[id] = options.contains(def?.toString()) ? def.toString() : null;
         } else {
           _fieldCtrls[id] = TextEditingController(
             text: def == null ? '' : '$def',
@@ -234,13 +250,15 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       setState(() {
         _pricingFields = fields;
         _fieldsHeadline =
-            res['headline']?.toString() ?? 'A few details for a fair price';
+            res['mode'] == 'gemini'
+                ? (res['headline']?.toString() ?? 'A few details for a fair price')
+                : '${category.displayName}: a few useful details';
         _fieldsNote = res['note']?.toString() ?? '';
         _fieldsLoading = false;
       });
       await _refreshFairQuote();
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || requestId != _fieldsRequestId || category != _selectedCategory) return;
       setState(() {
         _fieldsLoading = false;
         _quoteError = '$e';
@@ -249,14 +267,17 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
   }
 
   Future<void> _refreshFairQuote() async {
+    final requestId = ++_quoteRequestId;
+    final category = _selectedCategory;
     final desc = _descCtrl.text.trim();
     final loc = _pickedLocation;
-    if (desc.length < 20 || loc == null || _selectedCategory == null) {
+    if (desc.length < 20 || loc == null || category == null) {
       setState(() {
         _quoteError = desc.length < 20
             ? 'Description must be at least 20 characters'
             : 'Pick a location first';
         _priceQuote = null;
+        _quoting = false;
       });
       return;
     }
@@ -269,7 +290,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       final q = await context.read<TaskRepository>().priceQuote(
             title: _titleCtrl.text.trim(),
             description: desc,
-            category: _selectedCategory!.name,
+            category: category.name,
             lat: loc.latitude,
             lon: loc.longitude,
             urgency: _urgency,
@@ -277,7 +298,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             clientBoostLkr: _clientBoostLkr,
             contextFields: ctx,
           );
-      if (!mounted) return;
+      if (!mounted || requestId != _quoteRequestId || category != _selectedCategory) return;
       final labor = (q['labor_lkr'] as num?)?.toDouble();
       final hours = (q['duration_hours'] as num?)?.toDouble() ?? _estimatedHours;
       setState(() {
@@ -289,7 +310,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
         }
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || requestId != _quoteRequestId || category != _selectedCategory) return;
       setState(() {
         _quoting = false;
         _quoteError = '$e';
@@ -350,6 +371,11 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
     setState(() {
       _step = 0;
       _selectedCategory = null;
+      _selectedService = null;
+      _fieldsRequestId++;
+      _quoteRequestId++;
+      _quoting = false;
+      _fieldsLoading = false;
       _titleCtrl.clear();
       _descCtrl.clear();
       _locationLabelCtrl.clear();
@@ -368,9 +394,17 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       _pricingFields = const [];
       _fieldsHeadline = 'A few details for a fair price';
       _fieldsNote = '';
-      for (final c in _fieldCtrls.values) {
-        c.dispose();
-      }
+      final retiredControllers = [
+        ..._fieldCtrls.values, ..._itemNameCtrls, ..._itemQtyCtrls,
+      ];
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        for (final controller in retiredControllers) {
+          controller.dispose();
+        }
+      });
+      _itemNameCtrls.clear();
+      _itemQtyCtrls.clear();
+      _goodsBudget = 0;
       _fieldCtrls.clear();
       _fieldValues.clear();
     });
@@ -497,6 +531,10 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
   }
 
   Future<void> _submit() async {
+    if (_quoting || _fieldsLoading) return;
+    if (!(_pricingFormKey.currentState?.validate() ?? false)) return;
+    await _refreshFairQuote();
+    if (!mounted || _quoting || _quoteError != null || _priceQuote == null) return;
     if (_pickedLocation == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select your city')),
@@ -720,7 +758,10 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             );
           }
         },
-        child: Column(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 840),
+            child: Column(
           children: [
             _buildProgressBar(),
             Expanded(
@@ -733,6 +774,8 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             ),
             if (_step > 0 && _step < 3) _buildBottomBar(),
           ],
+            ),
+          ),
         ),
       ),
     );
@@ -793,7 +836,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
               maxCrossAxisExtent: 140,
-              childAspectRatio: 1.25,
+              mainAxisExtent: 148,
               crossAxisSpacing: 10,
               mainAxisSpacing: 10,
             ),
@@ -814,10 +857,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text(
-                        cat.emoji,
-                        style: const TextStyle(fontSize: 28),
-                      ),
+                      CategoryIconBadge(cat, size: 48),
                       const Gap(6),
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 3),
@@ -877,10 +917,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                       shape: BoxShape.circle,
                     ),
                     child: Center(
-                      child: Text(
-                        _selectedCategory!.emoji,
-                        style: const TextStyle(fontSize: 20),
-                      ),
+                      child: CategoryIcon(_selectedCategory!, size: 20),
                     ),
                   ),
                   const Gap(12),
@@ -927,14 +964,42 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             ).animate().fadeIn(duration: 280.ms),
 
             const Gap(22),
-            _FieldLabel('Task Title'),
+            _FieldLabel('What do you need?'),
+            const Gap(8),
+            DropdownButtonFormField<String>(
+              key: ValueKey('service-${_selectedCategory!.name}'),
+              value: _selectedService,
+              isExpanded: true,
+              menuMaxHeight: 320,
+              decoration: const InputDecoration(
+                hintText: 'Choose a task or write your own',
+                prefixIcon: Icon(Icons.checklist_rounded),
+              ),
+              items: [
+                ...CategoryTaskGuide.services(_selectedCategory!),
+                CategoryTaskGuide.custom,
+              ].map((option) => DropdownMenuItem(
+                value: option,
+                child: Text(option, maxLines: 2, overflow: TextOverflow.ellipsis),
+              )).toList(),
+              onChanged: (value) {
+                setState(() => _selectedService = value);
+                if (value != null && value != CategoryTaskGuide.custom) {
+                  _titleCtrl.text = value;
+                } else {
+                  _titleCtrl.clear();
+                }
+              },
+            ),
+            const Gap(18),
+            _FieldLabel('Task title — you can edit this'),
             const Gap(8),
             TextFormField(
               controller: _titleCtrl,
               style: AppTextStyles.bodyLarge,
               decoration: InputDecoration(
                 hintText:
-                    'e.g. ${_selectedCategory!.description.split(' ').take(6).join(' ')}…',
+                    'e.g. ${CategoryTaskGuide.services(_selectedCategory!).first}',
                 hintStyle: AppTextStyles.bodyLarge
                     .copyWith(color: AppColors.textMuted),
                 prefixIcon: Icon(Icons.title_rounded,
@@ -953,7 +1018,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
               style: AppTextStyles.bodyLarge,
               decoration: InputDecoration(
                 hintText:
-                    'Describe the full job — what to do, where, any delivery, size, timing…',
+                    CategoryTaskGuide.detailsHint(_selectedCategory!),
                 alignLabelWithHint: true,
                 helperText:
                     'Next we’ll ask only the details needed to price this task',
@@ -972,7 +1037,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             ),
 
             const Gap(18),
-            _FieldLabel('Photos (optional · all categories)'),
+            _FieldLabel('Reference photos (optional)'),
             const Gap(8),
             Text(
               'Add up to $_maxPhotos photos so helpers see the place, items, or context.',
@@ -1144,7 +1209,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
               maxCrossAxisExtent: 140,
-              childAspectRatio: 1.25,
+              mainAxisExtent: 148,
               crossAxisSpacing: 10,
               mainAxisSpacing: 10,
             ),
@@ -1272,31 +1337,33 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
     }
 
     if (type == 'select') {
-      final options =
-          ((f['options'] as List?) ?? const []).map((e) => '$e').toList();
-      final current = _fieldValues[id]?.toString() ??
-          (options.isNotEmpty ? options.first : '');
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _FieldLabel(required ? '$label *' : label),
-          const Gap(6),
-          Wrap(
-            spacing: 6,
-            children: [
-              for (final o in options)
-                ChoiceChip(
-                  label: Text(o),
-                  selected: current == o,
-                  onSelected: (_) {
-                    setState(() => _fieldValues[id] = o);
-                    _refreshFairQuote();
-                  },
-                ),
-            ],
+      final options = ((f['options'] as List?) ?? const [])
+          .map((e) => e.toString()).where((e) => e.isNotEmpty).toSet().toList();
+      final value = _fieldValues[id]?.toString();
+      if (options.isNotEmpty) {
+        return DropdownButtonFormField<String>(
+          key: ValueKey('${_selectedCategory!.name}-$id-$_fieldsRequestId'),
+          value: options.contains(value) ? value : null,
+          isExpanded: true,
+          menuMaxHeight: 320,
+          decoration: InputDecoration(
+            labelText: required ? '$label *' : label,
+            hintText: 'Select an option',
+            helperText: help,
+            helperMaxLines: 3,
           ),
-        ],
-      );
+          items: options.map((option) => DropdownMenuItem(
+            value: option,
+            child: Text(option, maxLines: 2, overflow: TextOverflow.ellipsis),
+          )).toList(),
+          validator: (v) => required && (v == null || v.isEmpty)
+              ? 'Please select $label' : null,
+          onChanged: (v) {
+            setState(() => _fieldValues[id] = v);
+            _refreshFairQuote();
+          },
+        );
+      }
     }
 
     if (type == 'date') {
@@ -1351,7 +1418,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       children: [
         _FieldLabel(required ? '$label *' : label),
         const Gap(6),
-        TextField(
+        TextFormField(
           controller: _fieldCtrls[id],
           keyboardType: type == 'number'
               ? const TextInputType.numberWithOptions(decimal: true)
@@ -1360,6 +1427,18 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             hintText: help,
             suffixText: unit,
           ),
+          validator: (value) {
+            final text = value?.trim() ?? '';
+            if (text.isEmpty) return required ? 'Please enter $label' : null;
+            if (type == 'number') {
+              final number = num.tryParse(text);
+              final minimum = (f['min'] as num?) ?? 0;
+              if (number == null || !number.isFinite || number < minimum) {
+                return 'Enter a valid number of at least $minimum';
+              }
+            }
+            return null;
+          },
           onChanged: (_) {},
           onEditingComplete: _refreshFairQuote,
         ),
@@ -1378,7 +1457,9 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
-      child: Column(
+      child: Form(
+        key: _pricingFormKey,
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
@@ -1613,8 +1694,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                         shape: BoxShape.circle,
                       ),
                       child: Center(
-                        child: Text(_selectedCategory!.emoji,
-                            style: const TextStyle(fontSize: 19)),
+                        child: CategoryIcon(_selectedCategory!, size: 19),
                       ),
                     ),
                     const Gap(10),
@@ -1718,6 +1798,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             ),
           ),
         ],
+        ),
       ),
     );
   }

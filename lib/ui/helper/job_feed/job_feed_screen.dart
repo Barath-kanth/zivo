@@ -1,3 +1,4 @@
+import 'package:hyperlocal/ui/_shared/category_icon.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -308,7 +309,7 @@ class JobCard extends StatelessWidget {
                     border: Border.all(color: AppColors.helperAccent.withOpacity(0.3)),
                   ),
                   child: Center(
-                    child: Text(task.category.emoji, style: const TextStyle(fontSize: 20)),
+                    child: CategoryIcon(task.category, size: 20),
                   ),
                 ),
                 const Gap(12),
@@ -416,7 +417,7 @@ class JobCard extends StatelessWidget {
               const Gap(20),
               Row(
                 children: [
-                  Text(task.category.emoji, style: const TextStyle(fontSize: 28)),
+                  CategoryIcon(task.category, size: 28),
                   const Gap(12),
                   Expanded(child: Text(task.title, style: AppTextStyles.headingMedium)),
                   TaskStatusBadge(status: task.status),

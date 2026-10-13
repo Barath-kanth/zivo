@@ -1,3 +1,4 @@
+import 'package:hyperlocal/ui/_shared/category_icon.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:gap/gap.dart';
@@ -174,7 +175,7 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
 
           final isVerifying = state is OtpVerifying;
           final isInProgress = state is OtpStateInProgress;
-          final activeTask = task!;
+          final activeTask = task;
 
           return SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
@@ -589,7 +590,7 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
         children: [
           Row(
             children: [
-              Text(task.category.emoji, style: const TextStyle(fontSize: 22)),
+              CategoryIcon(task.category, size: 22),
               const Gap(10),
               Expanded(child: Text(task.title, style: AppTextStyles.headingSmall)),
               TaskStatusBadge(status: task.status),

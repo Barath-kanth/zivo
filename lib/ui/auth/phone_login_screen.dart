@@ -135,7 +135,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
       width: double.infinity,
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          colors: [Color(0xFFFF8A3D), Color(0xFFFF5A1F)],
+          colors: [Color(0xFF171717), Color(0xFF171717)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),

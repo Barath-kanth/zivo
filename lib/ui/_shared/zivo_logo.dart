@@ -29,7 +29,7 @@ class ZivoLogo extends StatelessWidget {
       child: CustomPaint(
         painter: _ZivoMarkPainter(
           onDark: markOnDark,
-          accent: AppColors.helperAccent,
+          accent: AppColors.brandGreen,
         ),
       ),
     );
@@ -46,8 +46,8 @@ class ZivoLogo extends StatelessWidget {
           style: TextStyle(
             fontFamily: 'Inter',
             fontSize: size * 0.56,
-            fontWeight: FontWeight.w800,
-            letterSpacing: -0.9,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.7,
             color: wordmarkColor ??
                 (markOnDark ? Colors.white : Colors.black),
             height: 1,

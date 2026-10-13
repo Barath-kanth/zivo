@@ -1,3 +1,4 @@
+import 'package:hyperlocal/ui/_shared/category_icon.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -7,10 +8,8 @@ import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
 import 'package:hyperlocal/blocs/task/task_bloc.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
-import 'package:hyperlocal/core/router/app_router.dart';
 import 'package:hyperlocal/data/models/task.dart';
 import 'package:hyperlocal/data/repositories/task_repository.dart';
-import 'package:hyperlocal/ui/_shared/task_status_badge.dart';
 import 'package:hyperlocal/ui/_shared/task_photo_gallery.dart';
 import 'package:hyperlocal/blocs/mode/mode_cubit.dart';
 
@@ -316,7 +315,7 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
       child: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color(0xFFE8F5E9), AppColors.backgroundDark],
+            colors: [AppColors.backgroundDark, AppColors.backgroundDark],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -499,7 +498,7 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [
                   BoxShadow(
-                    color: AppColors.helperAccent.withOpacity(0.2),
+                    color: AppColors.helperAccent.withOpacity(0.04),
                     blurRadius: 16,
                     offset: const Offset(0, 6),
                   ),
@@ -508,20 +507,20 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
               child: Row(
                 children: [
                   _EarningStat(
-                    emoji: '💰',
+                    icon: Icons.account_balance_wallet_outlined,
                     label: 'Total Earned',
                     value:
                         'LKR ${(profile?.helperEarnings ?? 0.0).toStringAsFixed(2)}',
                   ),
                   _Divider(),
                   _EarningStat(
-                    emoji: '✅',
+                    icon: Icons.task_alt,
                     label: 'Jobs Done',
                     value: '${profile?.totalTasksHelped ?? 0}',
                   ),
                   _Divider(),
                   _EarningStat(
-                    emoji: '⭐',
+                    icon: Icons.star_outline,
                     label: 'Rating',
                     value:
                         '${(profile?.ratingAsHelper ?? 0.0).toStringAsFixed(1)}',
@@ -656,6 +655,7 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
               .read<TaskBloc>()
               .getActiveTaskForHelper(helperId: helperId);
           return SliverFillRemaining(
+            hasScrollBody: false,
             child: _EmptyFeed(
               hasActiveJob: active != null,
               onOpenActive: active == null
@@ -753,8 +753,7 @@ class _JobCard extends StatelessWidget {
             ),
             child: Row(
               children: [
-                Text(task.category.emoji,
-                    style: const TextStyle(fontSize: 18)),
+                CategoryIcon(task.category, size: 18),
                 const Gap(8),
                 Text(
                   task.category.displayName.toUpperCase(),
@@ -877,8 +876,8 @@ class _JobCard extends StatelessWidget {
 
 class _EarningStat extends StatelessWidget {
   const _EarningStat(
-      {required this.emoji, required this.label, required this.value});
-  final String emoji;
+      {required this.icon, required this.label, required this.value});
+  final IconData icon;
   final String label;
   final String value;
 
@@ -887,14 +886,14 @@ class _EarningStat extends StatelessWidget {
     return Expanded(
       child: Column(
         children: [
-          Text(emoji, style: const TextStyle(fontSize: 18)),
+          Icon(icon, size: 20, color: Colors.white),
           const Gap(4),
           Text(value,
               style: AppTextStyles.headingSmall.copyWith(
                   color: Colors.white, fontSize: 15)),
           Text(label,
               style: AppTextStyles.bodySmall
-                  .copyWith(color: Colors.white60, fontSize: 10)),
+                  .copyWith(color: Colors.white70, fontSize: 12)),
         ],
       ),
     );
@@ -919,15 +918,13 @@ class _EmptyFeed extends StatelessWidget {
   Widget build(BuildContext context) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(40),
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 120),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text('🔍', style: const TextStyle(fontSize: 48))
-                .animate(onPlay: (c) => c.repeat())
-                .shimmer(
-                    duration: 2000.ms,
-                    color: AppColors.helperAccent.withOpacity(0.3)),
+            const Icon(Icons.search_rounded, size: 48,
+                color: AppColors.textSecondary),
             const Gap(16),
             Text(
               hasActiveJob
