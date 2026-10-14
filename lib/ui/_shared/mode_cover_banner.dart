@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
-import 'package:hyperlocal/ui/_shared/zivo_logo.dart';
 
-/// ZePay-style cover hero for Client / Helper home.
+import 'neighbourhood_art.dart';
+import 'zivo_logo.dart';
+
+/// Compact reference-inspired home header shared by both app roles.
 class ModeCoverBanner extends StatelessWidget {
   const ModeCoverBanner({
     super.key,
@@ -14,7 +16,6 @@ class ModeCoverBanner extends StatelessWidget {
     this.onSearchTap,
     this.height = 200,
   });
-
   final bool isHelper;
   final VoidCallback? onModeTap;
   final Widget? trailing;
@@ -22,169 +23,114 @@ class ModeCoverBanner extends StatelessWidget {
   final VoidCallback? onSearchTap;
   final double height;
 
-  String get _asset => isHelper
-      ? 'assets/images/zivo_helper_cover.jpg'
-      : 'assets/images/zivo_client_cover.jpg';
-
   @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        SizedBox(
-          height: height,
-          width: double.infinity,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Image.asset(
-                _asset,
-                fit: BoxFit.cover,
-                filterQuality: FilterQuality.high,
-                errorBuilder: (_, __, ___) => Container(
-                  color: isHelper
-                      ? AppColors.brandGreenSoft
-                      : AppColors.surfaceDark,
-                ),
-              ),
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.black.withValues(alpha: 0.15),
-                      Colors.black.withValues(alpha: 0.45),
-                    ],
+  Widget build(BuildContext context) => Column(
+    children: [
+      ColoredBox(
+        color: const Color(0xFFE7F5FC),
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+            child: Row(
+              children: [
+                const ZivoLogo(size: 32, showWordmark: true),
+                const Spacer(),
+                if (onModeTap != null &&
+                    (MediaQuery.sizeOf(context).width < 360 ||
+                        MediaQuery.textScalerOf(context).scale(14) > 20))
+                  IconButton(
+                    tooltip: isHelper
+                        ? 'Switch to client mode'
+                        : 'Switch to helper mode',
+                    onPressed: onModeTap,
+                    icon: const Icon(Icons.swap_horiz_rounded),
+                    style: IconButton.styleFrom(backgroundColor: Colors.white),
+                  )
+                else if (onModeTap != null)
+                  TextButton.icon(
+                    onPressed: onModeTap,
+                    style: TextButton.styleFrom(
+                      backgroundColor: Colors.white.withValues(alpha: .85),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      minimumSize: const Size(48, 44),
+                    ),
+                    icon: const Icon(Icons.swap_horiz_rounded, size: 18),
+                    label: Text(isHelper ? 'Helper' : 'Client'),
                   ),
-                ),
-              ),
-              SafeArea(
-                bottom: false,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                  child: Row(
-                    children: [
-                      const ZivoLogo(
-                        size: 34,
-                        showWordmark: true,
-                        markOnDark: true,
-                        wordmarkColor: Colors.white,
-                      ),
-                      const Spacer(),
-                      if (onModeTap != null)
-                        Material(
-                          color: Colors.white.withValues(alpha: 0.92),
-                          borderRadius: BorderRadius.circular(22),
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(22),
-                            onTap: onModeTap,
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    isHelper
-                                        ? Icons.handshake_rounded
-                                        : Icons.person_search_rounded,
-                                    size: 16,
-                                    color: Colors.black,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    isHelper ? 'Helper mode' : 'Client mode',
-                                    style: AppTextStyles.bodySmall.copyWith(
-                                      color: Colors.black,
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 2),
-                                  const Icon(
-                                    Icons.swap_horiz_rounded,
-                                    size: 16,
-                                    color: Colors.black54,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      if (trailing != null) ...[
-                        const SizedBox(width: 8),
-                        trailing!,
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              Positioned(
-                left: 20,
-                right: 20,
-                bottom: 28,
-                child: Text(
-                  isHelper
-                      ? 'Earn nearby — pick jobs that fit you'
-                      : 'Get help nearby — queues, chores, care',
-                  style: AppTextStyles.headingMedium.copyWith(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                    height: 1.2,
-                    shadows: const [
-                      Shadow(blurRadius: 12, color: Colors.black54),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+                if (trailing != null) ...[const SizedBox(width: 10), trailing!],
+              ],
+            ),
           ),
         ),
-        if (onSearchTap != null)
-          Transform.translate(
-            offset: const Offset(0, -18),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Material(
-                color: Colors.white,
-                elevation: 6,
-                shadowColor: Colors.black26,
-                borderRadius: BorderRadius.circular(18),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(18),
-                  onTap: onSearchTap,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.search_rounded,
-                            color: AppColors.textMuted),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            searchHint ??
-                                (isHelper
-                                    ? 'Search jobs near you'
-                                    : 'Find services, chores & help'),
-                            style: AppTextStyles.bodyMedium.copyWith(
-                              color: AppColors.textMuted,
-                            ),
-                          ),
+      ),
+      SizedBox(
+        height: height - 48,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            NeighbourhoodArt(helper: isHelper),
+            Positioned(
+              left: 20,
+              right: 20,
+              top: 10,
+              child: Text(
+                isHelper
+                    ? 'Good work. Close to home.'
+                    : 'A little help. A better day.',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: AppTextStyles.headingMedium.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      if (onSearchTap != null)
+        Transform.translate(
+          offset: const Offset(0, -16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Material(
+              color: Colors.white,
+              elevation: 2,
+              shadowColor: const Color(0x14000000),
+              borderRadius: BorderRadius.circular(18),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: onSearchTap,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 17,
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.search_rounded,
+                        color: AppColors.textPrimary,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          searchHint ?? 'Search nearby',
+                          style: AppTextStyles.bodyMedium,
                         ),
-                      ],
-                    ),
+                      ),
+                      const Icon(
+                        Icons.arrow_forward_rounded,
+                        size: 18,
+                        color: AppColors.textMuted,
+                      ),
+                    ],
                   ),
                 ),
               ),
             ),
           ),
-      ],
-    );
-  }
+        ),
+    ],
+  );
 }

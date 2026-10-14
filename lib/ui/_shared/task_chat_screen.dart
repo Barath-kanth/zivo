@@ -267,7 +267,7 @@ class _TaskChatScreenState extends State<TaskChatScreen> {
                   IconButton.filled(
                     onPressed: (_sending || _readOnly) ? null : _send,
                     style: IconButton.styleFrom(
-                      backgroundColor: AppColors.accent,
+                      backgroundColor: AppColors.helperAccent,
                       foregroundColor: Colors.white,
                     ),
                     icon: _sending
@@ -339,7 +339,7 @@ class _Bubble extends StatelessWidget {
         margin: const EdgeInsets.symmetric(vertical: 4),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: mine ? AppColors.accent : AppColors.cardDark,
+          color: mine ? AppColors.helperAccent : AppColors.cardDark,
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(14),
             topRight: const Radius.circular(14),

@@ -64,7 +64,7 @@ class _ShellScreenState extends State<ShellScreen> {
       if (path.startsWith('/job/') && path.endsWith('/active')) return 1;
       return 0;
     } else {
-      if (path == AppRoutes.createTask) return 1;
+      if (path == AppRoutes.myTasks) return 1;
       if (path == AppRoutes.wallet) return 2;
       return 0;
     }
@@ -182,7 +182,7 @@ class _ShellScreenState extends State<ShellScreen> {
               ),
             ),
           ),
-          const SizedBox(
+          if (isHome) const SizedBox(
             width: 320,
             child: ClientHomeScreen(
               key: ValueKey('client-rail'),
@@ -194,6 +194,14 @@ class _ShellScreenState extends State<ShellScreen> {
       );
     }
 
+    if (desktop) {
+      return Center(child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1040),
+        child: ShellRouteContent(isHome: isHome, routedChild: child,
+          home: isHome ? (isHelper ? const HelperHomeScreen(key: ValueKey('helper'))
+            : const ClientHomeScreen(key: ValueKey('client'))) : null),
+      ));
+    }
     return ShellRouteContent(
       isHome: isHome,
       routedChild: child,
@@ -214,7 +222,7 @@ class _ShellScreenState extends State<ShellScreen> {
           ]
         : [
             const AppNavDestination(icon: Icons.home_outlined, activeIcon: Icons.home_rounded, label: 'Home'),
-            const AppNavDestination(icon: Icons.add_circle_outline, activeIcon: Icons.add_circle, label: 'Post'),
+            const AppNavDestination(icon: Icons.receipt_long_outlined, activeIcon: Icons.receipt_long, label: 'My tasks'),
             const AppNavDestination(icon: Icons.account_balance_wallet_outlined, activeIcon: Icons.account_balance_wallet, label: 'Wallet'),
             const AppNavDestination(icon: Icons.person_outline, activeIcon: Icons.person, label: 'Account'),
           ];
@@ -255,16 +263,16 @@ class _ShellScreenState extends State<ShellScreen> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(isSelected ? item.activeIcon : item.icon,
-                                color: isSelected ? AppColors.textPrimary : AppColors.textSecondary,
+                                color: isSelected ? AppColors.helperAccent : AppColors.textSecondary,
                                 size: 23),
                               const SizedBox(height: 4),
                               Text(item.label,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: AppTextStyles.bodySmall.copyWith(
-                                  color: isSelected ? AppColors.textPrimary : AppColors.textSecondary,
+                                  color: isSelected ? AppColors.helperAccent : AppColors.textSecondary,
                                   fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                                  fontSize: 11,
+                                  fontSize: 12,
                                   height: 1.2,
                                   letterSpacing: -0.15,
                                 ),
@@ -326,15 +334,9 @@ class _ShellScreenState extends State<ShellScreen> {
       if (index == 0) {
         context.go(AppRoutes.shell);
       } else if (index == 1) {
-        if (!await requireAuth(context, returnTo: AppRoutes.createTask)) {
-          return;
-        }
+        if (!await requireAuth(context, returnTo: AppRoutes.myTasks)) return;
         if (!mounted) return;
-        if (!await requireVerified(context, returnTo: AppRoutes.createTask)) {
-          return;
-        }
-        if (!mounted) return;
-        context.go(AppRoutes.createTask);
+        context.go(AppRoutes.myTasks);
       } else if (index == 2) {
         if (!await requireAuth(context, returnTo: AppRoutes.wallet)) return;
         if (!mounted) return;

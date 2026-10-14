@@ -73,7 +73,7 @@ void main() {
     expect(find.text('Navigation'), findsOneWidget);
   });
 
-  testWidgets('category badges render bundled 3d icon assets', (tester) async {
+  testWidgets('category badges use assets or accurate service symbols', (tester) async {
     await tester.pumpWidget(host(
       Scaffold(
         body: SingleChildScrollView(
@@ -86,6 +86,7 @@ void main() {
       ),
     ));
     await tester.pumpAndSettle();
-    expect(find.byType(Image), findsNWidgets(TaskCategory.values.length));
+    expect(find.byType(Image), findsNWidgets(TaskCategory.values.where((c) => !CategoryIcon.usesSymbol(c)).length));
+    expect(find.byIcon(Icons.local_laundry_service_rounded), findsOneWidget);
   });
 }

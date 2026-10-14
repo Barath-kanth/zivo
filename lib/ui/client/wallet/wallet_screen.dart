@@ -11,6 +11,7 @@ import 'package:hyperlocal/data/models/wallet_ledger.dart';
 import 'package:hyperlocal/data/repositories/payment_repository.dart';
 import 'package:hyperlocal/ui/_shared/empty_state_widget.dart';
 import 'package:go_router/go_router.dart';
+import 'package:hyperlocal/blocs/mode/mode_cubit.dart';
 
 class WalletScreen extends StatefulWidget {
   const WalletScreen({super.key});
@@ -50,8 +51,8 @@ class _WalletScreenState extends State<WalletScreen> {
           icon: const Icon(Icons.arrow_back_ios_new_rounded, color: AppColors.textPrimary, size: 20),
           onPressed: () => context.go('/'),
         ),
-        title: const Text('Wallet'),
-        centerTitle: true,
+        title: Text(context.watch<ModeCubit>().isHelperMode ? 'Earnings & wallet' : 'Wallet'),
+        centerTitle: false,
       ),
       body: BlocBuilder<WalletBloc, WalletState>(
         builder: (context, state) {
@@ -64,9 +65,14 @@ class _WalletScreenState extends State<WalletScreen> {
           if (state is WalletFailure) {
             return EmptyStateWidget(
               icon: Icons.error_outline_rounded,
-              title: 'Load Failed',
+              title: 'Wallet unavailable',
               subtitle: state.message,
               color: AppColors.errorColor,
+              actionLabel: 'Try again',
+              onAction: () {
+                final auth = context.read<AuthBloc>().state;
+                if (auth is AuthAuthenticated) context.read<WalletBloc>().add(WalletFetchRequested(auth.profile.id));
+              },
             );
           }
 
@@ -112,8 +118,9 @@ class _WalletScreenState extends State<WalletScreen> {
         margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
         padding: const EdgeInsets.all(22),
         decoration: BoxDecoration(
-          gradient: AppColors.accentGradient,
-          borderRadius: BorderRadius.circular(16),
+          color: AppColors.brandGreenSoft,
+          border: Border.all(color: AppColors.borderColor),
+          borderRadius: BorderRadius.circular(24),
           boxShadow: [
             BoxShadow(
               color: AppColors.accent.withValues(alpha: 0.04),
@@ -128,12 +135,12 @@ class _WalletScreenState extends State<WalletScreen> {
             Row(
               children: [
                 const Icon(Icons.account_balance_wallet_rounded,
-                    color: Colors.white70, size: 18),
+                    color: AppColors.textSecondary, size: 18),
                 const Gap(8),
                 Text(
                   'Available Balance',
                   style: AppTextStyles.bodyMedium
-                      .copyWith(color: Colors.white70),
+                      .copyWith(color: AppColors.textSecondary),
                 ),
               ],
             ),
@@ -144,7 +151,7 @@ class _WalletScreenState extends State<WalletScreen> {
                 fontFamily: 'Inter',
                 fontSize: 36,
                 fontWeight: FontWeight.w700,
-                color: Colors.white,
+                color: AppColors.textPrimary,
                 letterSpacing: -0.5,
               ),
             ),
@@ -160,7 +167,7 @@ class _WalletScreenState extends State<WalletScreen> {
                 Container(
                     width: 1,
                     height: 30,
-                    color: Colors.white.withValues(alpha: 0.2),
+                    color: AppColors.borderColor,
                     margin: const EdgeInsets.symmetric(horizontal: 16)),
                 _MiniStat(
                   icon: Icons.savings_rounded,
@@ -196,7 +203,7 @@ class _WalletScreenState extends State<WalletScreen> {
             Expanded(
               child: _ActionBtn(
                 icon: Icons.send_rounded,
-                label: 'Transfer',
+                label: 'Transfer · soon',
                 color: AppColors.helperAccent,
                 onTap: () => ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
@@ -436,14 +443,14 @@ class _MiniStat extends StatelessWidget {
             Flexible(
               child: Text(label,
                 style: AppTextStyles.bodySmall
-                    .copyWith(color: Colors.white70, fontSize: 12)),
+                    .copyWith(color: AppColors.textSecondary, fontSize: 12)),
             ),
           ],
         ),
         const Gap(2),
         Text(value,
             style: AppTextStyles.headingSmall
-                .copyWith(color: Colors.white, fontSize: 13)),
+                .copyWith(color: AppColors.textPrimary, fontSize: 13)),
       ],
       ),
     );
@@ -470,9 +477,9 @@ class _ActionBtn extends StatelessWidget {
         padding:
             const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
         decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.1),
+          color: Colors.white,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: color.withValues(alpha: 0.25)),
+          border: Border.all(color: AppColors.borderColor),
         ),
         child: Column(
           children: [
@@ -545,7 +552,7 @@ class _LedgerTile extends StatelessWidget {
                 Text(
                   _formatDate(entry.createdAt),
                   style: AppTextStyles.bodySmall
-                      .copyWith(color: AppColors.textMuted, fontSize: 10),
+                      .copyWith(color: AppColors.textMuted, fontSize: 12),
                 ),
               ],
             ),

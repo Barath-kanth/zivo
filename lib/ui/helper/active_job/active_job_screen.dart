@@ -91,7 +91,7 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
     return Scaffold(
       backgroundColor: AppColors.backgroundDark,
       appBar: AppBar(
-        title: const Text('Active Job'),
+        title: const Text('Your active job'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new_rounded),
           onPressed: () => context.go('/'),
@@ -731,12 +731,12 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
           ).animate(onPlay: (c) => c.repeat())
               .scaleXY(end: 1.5, duration: 700.ms, curve: Curves.easeInOut),
           const Gap(10),
-          Text(
+          Flexible(child: Text(
             isInProgress ? 'Task is underway' : 'Waiting for Start OTP',
             style: AppTextStyles.labelLarge.copyWith(
               color: isInProgress ? AppColors.helperAccent : AppColors.statusMatched,
             ),
-          ),
+          )),
         ],
       ),
     );
@@ -768,7 +768,8 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
             TaskPhotoGallery(photoUrls: task.photoUrls, height: 110),
           ],
           const Divider(height: 20),
-          Row(
+          Wrap(
+            spacing: 10, runSpacing: 8,
             children: [
               _DetailChip(Icons.schedule_rounded, '${task.estimatedHours}h'),
               const Gap(10),

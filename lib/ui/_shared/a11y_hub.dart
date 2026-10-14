@@ -224,7 +224,7 @@ class _HubAction extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
-        color: const Color(0xFFF6F6F6),
+        color: AppColors.backgroundDark,
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
           borderRadius: BorderRadius.circular(14),

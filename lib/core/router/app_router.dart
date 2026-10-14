@@ -10,6 +10,7 @@ import 'package:hyperlocal/ui/shell/shell_screen.dart';
 import 'package:hyperlocal/ui/client/task_creation/task_creation_screen.dart';
 import 'package:hyperlocal/ui/client/task_tracking/task_tracking_screen.dart';
 import 'package:hyperlocal/ui/client/wallet/wallet_screen.dart';
+import 'package:hyperlocal/ui/client/client_home_screen.dart';
 import 'package:hyperlocal/ui/client/shared_live_screen.dart';
 import 'package:hyperlocal/ui/helper/job_feed/job_feed_screen.dart';
 import 'package:hyperlocal/ui/helper/active_job/active_job_screen.dart';
@@ -35,6 +36,7 @@ abstract class AppRoutes {
   static const String taskChat = '/task/:taskId/chat';
   static const String activeJob = '/job/:taskId/active';
   static const String wallet = '/wallet';
+  static const String myTasks = '/my-tasks';
 
   static String chatFor(String taskId, {String? title}) {
     final base = '/task/$taskId/chat';
@@ -151,6 +153,13 @@ class AppRouter {
             pageBuilder: (ctx, state) => _noTransition(
               state,
               const SizedBox.shrink(),
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.myTasks,
+            name: 'myTasks',
+            pageBuilder: (ctx, state) => _noTransition(
+              state, const ClientHomeScreen(pane: ClientHomePane.tasksOnly),
             ),
           ),
           GoRoute(
@@ -317,6 +326,7 @@ class AppRouter {
   static bool _requiresAuth(String loc) {
     if (loc == AppRoutes.createTask) return true;
     if (loc == AppRoutes.wallet) return true;
+    if (loc == AppRoutes.myTasks) return true;
     if (loc == AppRoutes.account) return true;
     if (loc == AppRoutes.settings) return true;
     if (loc == AppRoutes.qualifications) return true;
@@ -421,9 +431,9 @@ class AppRouter {
     return CustomTransitionPage(
       key: state.pageKey,
       child: child,
-      transitionDuration: const Duration(milliseconds: 350),
+      transitionDuration: const Duration(milliseconds: 220),
       transitionsBuilder: (ctx, animation, _, c) =>
-          FadeTransition(opacity: animation, child: c),
+          MediaQuery.disableAnimationsOf(ctx) ? c : FadeTransition(opacity: animation, child: c),
     );
   }
 
@@ -431,10 +441,10 @@ class AppRouter {
     return CustomTransitionPage(
       key: state.pageKey,
       child: child,
-      transitionDuration: const Duration(milliseconds: 300),
-      transitionsBuilder: (ctx, animation, _, c) => SlideTransition(
+      transitionDuration: const Duration(milliseconds: 240),
+      transitionsBuilder: (ctx, animation, _, c) => MediaQuery.disableAnimationsOf(ctx) ? c : SlideTransition(
         position: Tween<Offset>(
-          begin: const Offset(0, 0.05),
+          begin: const Offset(0, 0.025),
           end: Offset.zero,
         ).animate(
             CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),

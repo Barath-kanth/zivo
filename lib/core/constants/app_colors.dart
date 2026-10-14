@@ -5,9 +5,9 @@ abstract class AppColors {
   AppColors._();
 
   // ── Backgrounds — crisp whites and light grays ─────────────────────────────
-  static const Color backgroundDark  = Color(0xFFFFFFFF); // solid white
-  static const Color surfaceDark     = Color(0xFFF6F6F6); // light gray surface
-  static const Color cardDark        = Color(0xFFF3F3F3); // light gray card
+  static const Color backgroundDark  = Color(0xFFF7F9F7); // quiet app canvas
+  static const Color surfaceDark     = Color(0xFFEEF4EF); // quiet green-tinted grouping
+  static const Color cardDark        = Color(0xFFFFFFFF); // white reference-style cards
   static const Color cardElevated    = Color(0xFFFFFFFF); // elevated white
 
   // Brand accent from the supplied reference; dark green remains for text.
@@ -15,10 +15,10 @@ abstract class AppColors {
   static const Color brandGreenSoft = Color(0xFFE8F8EF);
 
   static const Color glassSurface = Color(0xD9FFFFFF);
-  static const Color glassSelection = Color(0x14000000);
+  static const Color glassSelection = Color(0xFFE8F8EF);
 
   // ── Borders ───────────────────────────────────────────────────────────────
-  static const Color borderColor     = Color(0xFFE2E2E2);
+  static const Color borderColor     = Color(0xFFE2E8E3);
   static const Color borderActive    = Color(0xFF000000);
 
   // ── Accent — Classic Black (Uber primary color) ───────────────────────────
@@ -62,7 +62,7 @@ abstract class AppColors {
   static const Color statusCancelled  = Color(0xFFE11900); // red
 
   // ── Text — High contrast ──────────────────────────────────────────────────
-  static const Color textPrimary   = Color(0xFF000000); // solid black
+  static const Color textPrimary   = Color(0xFF14201B); // warm charcoal text
   static const Color textSecondary = Color(0xFF545454); // dark gray
   static const Color textMuted     = Color(0xFF686868); // light gray
 

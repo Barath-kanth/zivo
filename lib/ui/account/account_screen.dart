@@ -91,7 +91,7 @@ class _AccountScreenState extends State<AccountScreen> {
           final isHelper = context.watch<ModeCubit>().isHelperMode;
 
           return Scaffold(
-            backgroundColor: const Color(0xFFF6F6F6),
+            backgroundColor: AppColors.backgroundDark,
             body: SafeArea(
               child: Column(
                 children: [
@@ -205,7 +205,7 @@ class _AccountScreenState extends State<AccountScreen> {
                 child: Material(
                   color: active
                       ? AppColors.helperAccent.withValues(alpha: 0.08)
-                      : const Color(0xFFF6F6F6),
+                      : AppColors.backgroundDark,
                   borderRadius: BorderRadius.circular(12),
                   child: ListTile(
                     onTap: active

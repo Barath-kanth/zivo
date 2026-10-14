@@ -1,4 +1,8 @@
 import 'package:hyperlocal/ui/_shared/category_icon.dart';
+import 'package:hyperlocal/ui/_shared/empty_state_widget.dart';
+import 'package:hyperlocal/ui/_shared/zivo_section.dart';
+import 'package:hyperlocal/ui/_shared/helper_job_search.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -25,18 +29,14 @@ class HelperHomeScreen extends StatefulWidget {
 }
 
 class _HelperHomeScreenState extends State<HelperHomeScreen> {
-  String _selectedFilter = 'All';
+  TaskCategory? _selectedCategory;
+  String _searchQuery = '';
   bool _presenceOn = false;
   bool _presenceBusy = false;
   List<Map<String, dynamic>> _batchStops = const [];
   int _vouchCount = 0;
   int _vouchThreshold = 3;
   bool _neighborVouched = false;
-
-  final _filters = [
-    'All', '🚶 Queue', '🛒 Grocery', '🧹 Cleaning',
-    '📦 Moving', '📚 Tutoring', '💻 Tech', '🐕 Pet Care',
-  ];
 
   @override
   void initState() {
@@ -52,8 +52,9 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
     final auth = context.read<AuthBloc>().state;
     if (auth is! AuthAuthenticated) return;
     try {
-      final card =
-          await context.read<TaskRepository>().helperTrust(auth.profile.id);
+      final card = await context.read<TaskRepository>().helperTrust(
+        auth.profile.id,
+      );
       if (!mounted) return;
       setState(() {
         _vouchCount = (card['vouch_count'] as num?)?.toInt() ?? 0;
@@ -84,26 +85,41 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
   Future<void> _togglePresence(bool on) async {
     final auth = context.read<AuthBloc>().state;
     if (auth is! AuthAuthenticated) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sign in to go Available')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Sign in to go Available')));
       return;
     }
     setState(() => _presenceBusy = true);
     try {
+      Position? position;
+      if (on) {
+        var permission = await Geolocator.checkPermission();
+        if (permission == LocationPermission.denied)
+          permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied ||
+            permission == LocationPermission.deniedForever) {
+          throw Exception('Allow location access to receive nearby requests.');
+        }
+        position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.medium,
+          timeLimit: const Duration(seconds: 12),
+        );
+      }
+      if (!mounted) return;
       await context.read<TaskRepository>().setHelperPresence(
-            available: on,
-            lat: on ? 6.9271 : null,
-            lon: on ? 79.8612 : null,
-          );
+        available: on,
+        lat: position?.latitude,
+        lon: position?.longitude,
+      );
       if (!mounted) return;
       setState(() => _presenceOn = on);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             on
-                ? 'Porch light ON — clients can Instant Dispatch you within ~500 m'
-                : 'Porch light OFF',
+                ? 'You are now available for nearby requests'
+                : 'You are now unavailable',
           ),
           backgroundColor: AppColors.helperAccent,
         ),
@@ -111,10 +127,7 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('$e'),
-          backgroundColor: AppColors.errorColor,
-        ),
+        SnackBar(content: Text('$e'), backgroundColor: AppColors.errorColor),
       );
     } finally {
       if (mounted) setState(() => _presenceBusy = false);
@@ -123,35 +136,55 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
 
   Color _catColor(TaskCategory cat) {
     switch (cat) {
-      case TaskCategory.queueStanding:     return AppColors.catQueue;
-      case TaskCategory.laundry:           return AppColors.catLaundry;
-      case TaskCategory.groceryRun:        return AppColors.catGrocery;
-      case TaskCategory.homeCleaning:      return AppColors.catCleaning;
-      case TaskCategory.homeCooking:       return AppColors.catCooking;
-      case TaskCategory.movingHelp:        return AppColors.catMoving;
-      case TaskCategory.tutoring:          return AppColors.catTutoring;
-      case TaskCategory.techHelp:          return AppColors.catTech;
-      case TaskCategory.petCare:           return AppColors.catPetCare;
-      case TaskCategory.tailoring:         return AppColors.catTailoring;
-      case TaskCategory.driver:            return AppColors.catDriver;
-      case TaskCategory.errandRun:         return AppColors.catErrand;
-      case TaskCategory.gardening:         return AppColors.catGarden;
-      case TaskCategory.documentWork:      return AppColors.catDocument;
-      case TaskCategory.hospitalCompanion: return AppColors.catHospital;
-      case TaskCategory.babysitting:       return AppColors.catBabysit;
-      case TaskCategory.elderCare:         return AppColors.catElderCare;
-      case TaskCategory.eventHelp:         return AppColors.catEvent;
-      case TaskCategory.photography:       return AppColors.catPhoto;
-      case TaskCategory.homeRepair:        return AppColors.catRepair;
-      case TaskCategory.other:             return AppColors.textMuted;
+      case TaskCategory.queueStanding:
+        return AppColors.catQueue;
+      case TaskCategory.laundry:
+        return AppColors.catLaundry;
+      case TaskCategory.groceryRun:
+        return AppColors.catGrocery;
+      case TaskCategory.homeCleaning:
+        return AppColors.catCleaning;
+      case TaskCategory.homeCooking:
+        return AppColors.catCooking;
+      case TaskCategory.movingHelp:
+        return AppColors.catMoving;
+      case TaskCategory.tutoring:
+        return AppColors.catTutoring;
+      case TaskCategory.techHelp:
+        return AppColors.catTech;
+      case TaskCategory.petCare:
+        return AppColors.catPetCare;
+      case TaskCategory.tailoring:
+        return AppColors.catTailoring;
+      case TaskCategory.driver:
+        return AppColors.catDriver;
+      case TaskCategory.errandRun:
+        return AppColors.catErrand;
+      case TaskCategory.gardening:
+        return AppColors.catGarden;
+      case TaskCategory.documentWork:
+        return AppColors.catDocument;
+      case TaskCategory.hospitalCompanion:
+        return AppColors.catHospital;
+      case TaskCategory.babysitting:
+        return AppColors.catBabysit;
+      case TaskCategory.elderCare:
+        return AppColors.catElderCare;
+      case TaskCategory.eventHelp:
+        return AppColors.catEvent;
+      case TaskCategory.photography:
+        return AppColors.catPhoto;
+      case TaskCategory.homeRepair:
+        return AppColors.catRepair;
+      case TaskCategory.other:
+        return AppColors.textMuted;
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return BlocListener<TaskBloc, TaskState>(
-      listenWhen: (prev, next) =>
-          next is TaskAccepted || next is TaskFailure,
+      listenWhen: (prev, next) => next is TaskAccepted || next is TaskFailure,
       listener: (context, state) {
         if (state is TaskFailure) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -188,7 +221,7 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
                 isHelper: true,
                 height: 200,
                 searchHint: 'Search jobs near you',
-                onSearchTap: () {},
+                onSearchTap: _searchJobs,
                 onModeTap: () {
                   final mode = context.read<ModeCubit>();
                   if (mode.state is! ModeToggling) mode.toggleMode();
@@ -208,8 +241,9 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
               ),
             ),
             _buildPresenceCard(),
-            _buildStreetRouteCard(),
             _buildEarningsBar(),
+            _buildQuickActions(),
+            _buildStreetRouteCard(),
             _buildFilterRow(),
             _buildFeedTitle(),
             _buildFeed(),
@@ -230,16 +264,15 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
             color: AppColors.cardDark,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: (_presenceOn ? AppColors.helperAccent : AppColors.borderColor)
-                  .withValues(alpha: 0.5),
+              color:
+                  (_presenceOn ? AppColors.helperAccent : AppColors.borderColor)
+                      .withValues(alpha: 0.5),
             ),
           ),
           child: Row(
             children: [
               Icon(
-                _presenceOn
-                    ? Icons.sensors_rounded
-                    : Icons.sensors_off_rounded,
+                _presenceOn ? Icons.sensors_rounded : Icons.sensors_off_rounded,
                 color: _presenceOn
                     ? AppColors.helperAccent
                     : AppColors.textMuted,
@@ -250,16 +283,16 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Porch light · Instant Dispatch',
+                      'Your availability',
                       style: AppTextStyles.headingSmall.copyWith(fontSize: 13),
                     ),
                     Text(
                       _presenceOn
-                          ? 'Available within ~500 m — no browse, clients ping you'
-                          : 'Turn ON so nearby micro-tasks can auto-match you',
+                          ? 'Available for nearby requests'
+                          : 'Go available when you are ready to work',
                       style: AppTextStyles.bodySmall.copyWith(
                         color: AppColors.textMuted,
-                        fontSize: 11,
+                        fontSize: 12,
                       ),
                     ),
                     const Gap(4),
@@ -271,7 +304,7 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
                         color: _neighborVouched
                             ? AppColors.helperAccent
                             : AppColors.textMuted,
-                        fontSize: 11,
+                        fontSize: 12,
                       ),
                     ),
                   ],
@@ -280,7 +313,6 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
               Switch.adaptive(
                 value: _presenceOn,
                 onChanged: _presenceBusy ? null : _togglePresence,
-                activeColor: AppColors.helperAccent,
               ),
             ],
           ),
@@ -317,7 +349,7 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
                 'Stay on one block — stack micro-tasks without travel',
                 style: AppTextStyles.bodySmall.copyWith(
                   color: AppColors.textMuted,
-                  fontSize: 11,
+                  fontSize: 12,
                 ),
               ),
               const Gap(8),
@@ -336,191 +368,18 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
     );
   }
 
-  Widget _buildHeader() {
-    return SliverToBoxAdapter(
-      child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [AppColors.backgroundDark, AppColors.backgroundDark],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-            child: BlocBuilder<AuthBloc, AuthState>(
-              builder: (context, state) {
-                final name = state is AuthAuthenticated
-                    ? state.profile.fullName.split(' ').first
-                    : 'Helper';
-                return Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color:
-                                      AppColors.helperAccent.withOpacity(0.15),
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                      color: AppColors.helperAccent
-                                          .withOpacity(0.4)),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Container(
-                                      width: 6,
-                                      height: 6,
-                                      decoration: BoxDecoration(
-                                        color: AppColors.helperAccent,
-                                        shape: BoxShape.circle,
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: AppColors.helperAccent
-                                                .withOpacity(0.8),
-                                            blurRadius: 5,
-                                            spreadRadius: 1,
-                                          )
-                                        ],
-                                      ),
-                                    )
-                                        .animate(
-                                            onPlay: (c) => c.repeat())
-                                        .scaleXY(end: 1.4, duration: 900.ms),
-                                    const Gap(5),
-                                    Text(
-                                      'HELPER MODE — LIVE',
-                                      style:
-                                          AppTextStyles.capsLabel.copyWith(
-                                        color: AppColors.helperAccent,
-                                        fontSize: 9,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          const Gap(10),
-                          Text(
-                            'Ready to help, $name?',
-                            style: AppTextStyles.displayMedium
-                                .copyWith(fontSize: 24),
-                          )
-                              .animate()
-                              .fadeIn(duration: 400.ms)
-                              .slideX(begin: -0.06),
-                          Text(
-                            'Jobs near you update in real-time.',
-                            style: AppTextStyles.bodyMedium,
-                          ).animate().fadeIn(delay: 100.ms),
-                        ],
-                      ),
-                    ),
-                    _buildSwitchToClientPill(context),
-                    const Gap(8),
-                    GestureDetector(
-                      onTap: () {
-                        showDialog(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            backgroundColor: AppColors.cardDark,
-                            title: const Text('Notifications'),
-                            content: const Text('No new notifications at this time.'),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx),
-                                child: const Text('OK', style: TextStyle(color: AppColors.helperAccent)),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                      child: Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: AppColors.cardDark,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: AppColors.borderColor),
-                        ),
-                        child: const Icon(Icons.notifications_outlined,
-                            color: AppColors.textSecondary, size: 20),
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSwitchToClientPill(BuildContext context) {
-    return BlocBuilder<ModeCubit, ModeState>(
-      builder: (context, state) {
-        final isToggling = state is ModeToggling;
-        return GestureDetector(
-          onTap: isToggling ? null : () {
-            context.read<ModeCubit>().toggleMode();
-          },
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.borderColor),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.06),
-                  blurRadius: 6,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.person_search_rounded, color: AppColors.accent, size: 16),
-                const Gap(6),
-                Text(
-                  'Client Mode',
-                  style: AppTextStyles.capsLabel.copyWith(
-                    color: AppColors.accent,
-                    fontSize: 9,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
   Widget _buildEarningsBar() {
     return BlocBuilder<AuthBloc, AuthState>(
       builder: (context, state) {
-        final profile =
-            state is AuthAuthenticated ? state.profile : null;
+        final profile = state is AuthAuthenticated ? state.profile : null;
         return SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
               decoration: BoxDecoration(
-                gradient: AppColors.helperGradient,
+                color: Colors.white,
+                border: Border.all(color: AppColors.borderColor),
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [
                   BoxShadow(
@@ -535,8 +394,7 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
                   _EarningStat(
                     icon: Icons.account_balance_wallet_outlined,
                     label: 'Total Earned',
-                    value:
-                        AppConfig.money(profile?.helperEarnings ?? 0.0),
+                    value: AppConfig.money(profile?.helperEarnings ?? 0.0),
                   ),
                   _Divider(),
                   _EarningStat(
@@ -560,92 +418,120 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
     );
   }
 
-  Widget _buildFilterRow() {
-    return SliverToBoxAdapter(
-      child: Padding(
-        padding: const EdgeInsets.only(top: 20, bottom: 4),
-        child: SizedBox(
-          height: 36,
-          child: ListView.separated(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            scrollDirection: Axis.horizontal,
-            itemCount: _filters.length,
-            separatorBuilder: (_, __) => const Gap(8),
-            itemBuilder: (ctx, i) {
-              final isSelected = _filters[i] == _selectedFilter;
-              return GestureDetector(
-                onTap: () =>
-                    setState(() => _selectedFilter = _filters[i]),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? AppColors.helperAccent
-                        : AppColors.cardDark,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: isSelected
-                          ? AppColors.helperAccent
-                          : AppColors.borderColor,
-                    ),
-                  ),
-                  child: Text(
-                    _filters[i],
-                    style: AppTextStyles.bodySmall.copyWith(
-                      color: isSelected
-                          ? Colors.white
-                          : AppColors.textSecondary,
-                      fontWeight: isSelected
-                          ? FontWeight.w600
-                          : FontWeight.w400,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ),
+  Future<void> _searchJobs() async {
+    final tasks = context.read<TaskBloc>().peekNearbyTasks();
+    final auth = context.read<AuthBloc>().state;
+    final visible = tasks
+        .where(
+          (task) =>
+              auth is! AuthAuthenticated || task.clientId != auth.profile.id,
+        )
+        .toList();
+    final query = await showSearch<String?>(
+      context: context,
+      delegate: HelperJobSearch(visible, initialQuery: _searchQuery),
     );
+    if (!mounted || query == null) return;
+    setState(() {
+      _searchQuery = query;
+      _selectedCategory = null;
+    });
   }
 
-  Widget _buildFeedTitle() {
-    return SliverToBoxAdapter(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-        child: BlocBuilder<TaskBloc, TaskState>(
-          builder: (ctx, state) {
-            final count =
-                state is TaskNearbyLoaded ? state.tasks.length : 0;
-            return Row(
-              children: [
-                Text('Nearby Jobs', style: AppTextStyles.headingSmall),
-                const Gap(8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: AppColors.helperAccent.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(12),
+  Widget _buildQuickActions() => SliverToBoxAdapter(
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          OutlinedButton.icon(
+            onPressed: () async {
+              final auth = context.read<AuthBloc>().state;
+              if (auth is! AuthAuthenticated) return;
+              final task = await context
+                  .read<TaskBloc>()
+                  .resolveHelperActiveTask(helperId: auth.profile.id);
+              if (!mounted) return;
+              if (task != null) {
+                context.go('/job/${task.id}/active');
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'No active job yet. Browse the opportunities below.',
+                    ),
                   ),
-                  child: Text(
-                    '$count open',
-                    style: AppTextStyles.bodySmall.copyWith(
-                        color: AppColors.helperAccent,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 11),
+                );
+              }
+            },
+            icon: const Icon(Icons.work_outline_rounded, size: 18),
+            label: const Text('Active job'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => context.go(AppRoutes.wallet),
+            icon: const Icon(Icons.account_balance_wallet_outlined, size: 18),
+            label: const Text('Earnings'),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _buildFilterRow() => SliverToBoxAdapter(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_searchQuery.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: InputChip(
+                label: Text(_searchQuery),
+                onDeleted: () => setState(() => _searchQuery = ''),
+              ),
+            ),
+          ),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.fromLTRB(16, 18, 16, 4),
+          child: Row(
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ChoiceChip(
+                  label: const Text('All jobs'),
+                  selected: _selectedCategory == null,
+                  onSelected: (_) => setState(() => _selectedCategory = null),
+                ),
+              ),
+              for (final category in TaskCategory.values)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    avatar: Icon(CategoryIcon.iconFor(category), size: 16),
+                    label: Text(category.displayName),
+                    selected: _selectedCategory == category,
+                    onSelected: (_) =>
+                        setState(() => _selectedCategory = category),
                   ),
                 ),
-              ],
-            );
-          },
+            ],
+          ),
         ),
-      ),
-    );
-  }
+      ],
+    ),
+  );
+
+  Widget _buildFeedTitle() => SliverToBoxAdapter(
+    child: ZivoSection(
+      title: 'Find your next job',
+      subtitle: 'Browse requests and choose what suits you',
+      action: 'Refresh',
+      onAction: () => context.read<TaskBloc>().add(TaskFetchNearbyTasks()),
+    ),
+  );
 
   Widget _buildFeed() {
     return BlocBuilder<TaskBloc, TaskState>(
@@ -654,36 +540,54 @@ class _HelperHomeScreenState extends State<HelperHomeScreen> {
           return const SliverFillRemaining(
             child: Center(
               child: CircularProgressIndicator(
-                  color: AppColors.helperAccent, strokeWidth: 2),
+                color: AppColors.helperAccent,
+                strokeWidth: 2,
+              ),
             ),
           );
         }
 
-        var tasks = state is TaskNearbyLoaded ? state.tasks : <Task>[];
+        var tasks = state is TaskNearbyLoaded
+            ? state.tasks
+            : context.read<TaskBloc>().peekNearbyTasks();
         final me = context.read<AuthBloc>().state;
         if (me is AuthAuthenticated) {
           tasks = tasks.where((t) => t.clientId != me.profile.id).toList();
         }
-        if (_selectedFilter != 'All') {
-          tasks = tasks.where((t) {
-            if (_selectedFilter == '🚶 Queue') return t.category == TaskCategory.queueStanding;
-            if (_selectedFilter == '🛒 Grocery') return t.category == TaskCategory.groceryRun;
-            if (_selectedFilter == '🧹 Cleaning') return t.category == TaskCategory.homeCleaning;
-            if (_selectedFilter == '📦 Moving') return t.category == TaskCategory.movingHelp;
-            if (_selectedFilter == '📚 Tutoring') return t.category == TaskCategory.tutoring;
-            if (_selectedFilter == '💻 Tech') return t.category == TaskCategory.techHelp;
-            if (_selectedFilter == '🐕 Pet Care') return t.category == TaskCategory.petCare;
-            return true;
-          }).toList();
+        tasks = tasks
+            .where(
+              (task) =>
+                  (_selectedCategory == null ||
+                      task.category == _selectedCategory) &&
+                  HelperJobSearch.matches(task, _searchQuery),
+            )
+            .toList();
+        if (tasks.isEmpty &&
+            (_selectedCategory != null || _searchQuery.isNotEmpty)) {
+          return SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 32),
+              child: EmptyStateWidget(
+                icon: Icons.search_off_rounded,
+                title: 'No matching jobs',
+                subtitle: 'Try another service or clear your filters.',
+                color: AppColors.helperAccent,
+                actionLabel: 'Clear filters',
+                onAction: () => setState(() {
+                  _selectedCategory = null;
+                  _searchQuery = '';
+                }),
+              ),
+            ),
+          );
         }
 
         if (tasks.isEmpty) {
           final auth = context.read<AuthBloc>().state;
-          final helperId =
-              auth is AuthAuthenticated ? auth.profile.id : null;
-          final active = context
-              .read<TaskBloc>()
-              .getActiveTaskForHelper(helperId: helperId);
+          final helperId = auth is AuthAuthenticated ? auth.profile.id : null;
+          final active = context.read<TaskBloc>().getActiveTaskForHelper(
+            helperId: helperId,
+          );
           return SliverFillRemaining(
             hasScrollBody: false,
             child: _EmptyFeed(
@@ -722,27 +626,48 @@ class JobCard extends StatelessWidget {
 
   Color _catColor(TaskCategory cat) {
     switch (cat) {
-      case TaskCategory.queueStanding:     return AppColors.catQueue;
-      case TaskCategory.laundry:           return AppColors.catLaundry;
-      case TaskCategory.groceryRun:        return AppColors.catGrocery;
-      case TaskCategory.homeCleaning:      return AppColors.catCleaning;
-      case TaskCategory.homeCooking:       return AppColors.catCooking;
-      case TaskCategory.movingHelp:        return AppColors.catMoving;
-      case TaskCategory.tutoring:          return AppColors.catTutoring;
-      case TaskCategory.techHelp:          return AppColors.catTech;
-      case TaskCategory.petCare:           return AppColors.catPetCare;
-      case TaskCategory.tailoring:         return AppColors.catTailoring;
-      case TaskCategory.driver:            return AppColors.catDriver;
-      case TaskCategory.errandRun:         return AppColors.catErrand;
-      case TaskCategory.gardening:         return AppColors.catGarden;
-      case TaskCategory.documentWork:      return AppColors.catDocument;
-      case TaskCategory.hospitalCompanion: return AppColors.catHospital;
-      case TaskCategory.babysitting:       return AppColors.catBabysit;
-      case TaskCategory.elderCare:         return AppColors.catElderCare;
-      case TaskCategory.eventHelp:         return AppColors.catEvent;
-      case TaskCategory.photography:       return AppColors.catPhoto;
-      case TaskCategory.homeRepair:        return AppColors.catRepair;
-      case TaskCategory.other:             return AppColors.textMuted;
+      case TaskCategory.queueStanding:
+        return AppColors.catQueue;
+      case TaskCategory.laundry:
+        return AppColors.catLaundry;
+      case TaskCategory.groceryRun:
+        return AppColors.catGrocery;
+      case TaskCategory.homeCleaning:
+        return AppColors.catCleaning;
+      case TaskCategory.homeCooking:
+        return AppColors.catCooking;
+      case TaskCategory.movingHelp:
+        return AppColors.catMoving;
+      case TaskCategory.tutoring:
+        return AppColors.catTutoring;
+      case TaskCategory.techHelp:
+        return AppColors.catTech;
+      case TaskCategory.petCare:
+        return AppColors.catPetCare;
+      case TaskCategory.tailoring:
+        return AppColors.catTailoring;
+      case TaskCategory.driver:
+        return AppColors.catDriver;
+      case TaskCategory.errandRun:
+        return AppColors.catErrand;
+      case TaskCategory.gardening:
+        return AppColors.catGarden;
+      case TaskCategory.documentWork:
+        return AppColors.catDocument;
+      case TaskCategory.hospitalCompanion:
+        return AppColors.catHospital;
+      case TaskCategory.babysitting:
+        return AppColors.catBabysit;
+      case TaskCategory.elderCare:
+        return AppColors.catElderCare;
+      case TaskCategory.eventHelp:
+        return AppColors.catEvent;
+      case TaskCategory.photography:
+        return AppColors.catPhoto;
+      case TaskCategory.homeRepair:
+        return AppColors.catRepair;
+      case TaskCategory.other:
+        return AppColors.textMuted;
     }
   }
 
@@ -754,169 +679,140 @@ class JobCard extends StatelessWidget {
 }
 
 class _JobCard extends StatelessWidget {
-  const _JobCard(
-      {required this.task, required this.index, required this.color});
+  const _JobCard({
+    required this.task,
+    required this.index,
+    required this.color,
+  });
   final Task task;
   final int index;
   final Color color;
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: AppColors.cardDark,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.borderColor),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Category header
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.10),
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(18)),
-            ),
-            child: Row(
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: Card(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                CategoryIcon(task.category, size: 18),
-                const Gap(8),
-                Text(
-                  task.category.displayName.toUpperCase(),
-                  style: AppTextStyles.capsLabel.copyWith(
-                      color: color, fontSize: 10, letterSpacing: 1.0),
-                ),
-                const Spacer(),
-                if (task.locationLabel != null)
-                  Row(
+                CategoryIconBadge(task.category, size: 48),
+                const Gap(12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.location_on_outlined,
-                          size: 12, color: AppColors.textMuted),
+                      Text(
+                        task.category.displayName,
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.helperAccent,
+                        ),
+                      ),
                       const Gap(3),
-                      Text(task.locationLabel!,
-                          style: AppTextStyles.bodySmall
-                              .copyWith(fontSize: 10)),
+                      Text(
+                        task.title,
+                        style: AppTextStyles.headingSmall,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ],
+                  ),
+                ),
+              ],
+            ),
+            const Gap(12),
+            Text(
+              task.description,
+              style: AppTextStyles.bodyMedium,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            if (task.photoUrls.isNotEmpty) ...[
+              const Gap(12),
+              TaskPhotoGallery(
+                photoUrls: task.photoUrls,
+                height: 80,
+                label: 'Client photos',
+              ),
+            ],
+            const Gap(12),
+            Wrap(
+              spacing: 14,
+              runSpacing: 8,
+              children: [
+                Text(
+                  '${task.estimatedHours}h estimated',
+                  style: AppTextStyles.bodySmall,
+                ),
+                if (task.locationLabel != null)
+                  Text(
+                    task.locationLabel!,
+                    style: AppTextStyles.bodySmall,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
               ],
             ),
-          ),
-
-          // Task body
-          Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            const Divider(height: 28),
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 20,
+              runSpacing: 12,
               children: [
-                Text(task.title,
-                    style: AppTextStyles.headingSmall,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis),
-                const Gap(6),
-                Text(task.description,
-                    style: AppTextStyles.bodyMedium,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis),
-                if (task.photoUrls.isNotEmpty) ...[
-                  const Gap(10),
-                  TaskPhotoGallery(
-                    photoUrls: task.photoUrls,
-                    height: 80,
-                    label: 'Client photos',
-                  ),
-                ],
-                const Gap(14),
-                Row(
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Pay
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('You earn',
-                            style: AppTextStyles.bodySmall
-                                .copyWith(fontSize: 10)),
-                        Text(
-                          AppConfig.money(task.totalAmount * 0.9),
-                          style: AppTextStyles.headingSmall.copyWith(
-                              color: AppColors.helperAccent),
-                        ),
-                      ],
-                    ),
-                    const Gap(16),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Duration',
-                            style: AppTextStyles.bodySmall
-                                .copyWith(fontSize: 10)),
-                        Text(
-                          '${task.estimatedHours}h',
-                          style: AppTextStyles.headingSmall,
-                        ),
-                      ],
-                    ),
-                    const Spacer(),
-                    // Accept button
-                    ElevatedButton(
-                      onPressed: () {
-                        final authState =
-                            context.read<AuthBloc>().state;
-                        if (authState is! AuthAuthenticated) return;
-                        if (task.clientId == authState.profile.id) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'You cannot accept a task you posted.',
-                              ),
-                              backgroundColor: AppColors.errorColor,
-                            ),
-                          );
-                          return;
-                        }
-                        context.read<TaskBloc>().add(TaskAccept(
-                            taskId: task.id,
-                            helperId: authState.profile.id));
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.helperAccent,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 12),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
-                        elevation: 0,
-                      ),
-                      child: Text(
-                        'Accept Job',
-                        style: AppTextStyles.capsLabel.copyWith(
-                            color: Colors.white,
-                            fontSize: 11,
-                            letterSpacing: 0.5),
-                      ),
+                    Text('Your earnings', style: AppTextStyles.bodySmall),
+                    Text(
+                      AppConfig.money(task.totalAmount * .9),
+                      style: AppTextStyles.headingMedium,
                     ),
                   ],
                 ),
+                FilledButton(
+                  onPressed: () {
+                    final auth = context.read<AuthBloc>().state;
+                    if (auth is! AuthAuthenticated) return;
+                    if (task.clientId == auth.profile.id) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('You cannot accept a task you posted.'),
+                        ),
+                      );
+                      return;
+                    }
+                    context.read<TaskBloc>().add(
+                      TaskAccept(taskId: task.id, helperId: auth.profile.id),
+                    );
+                  },
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(112, 48),
+                    shape: const StadiumBorder(),
+                  ),
+                  child: const Text('Accept job'),
+                ),
               ],
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    )
-        .animate(delay: Duration(milliseconds: 60 * index))
-        .fadeIn(duration: 350.ms)
-        .slideY(begin: 0.07);
-  }
+    ),
+  );
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 class _EarningStat extends StatelessWidget {
-  const _EarningStat(
-      {required this.icon, required this.label, required this.value});
+  const _EarningStat({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
   final IconData icon;
   final String label;
   final String value;
@@ -926,14 +822,22 @@ class _EarningStat extends StatelessWidget {
     return Expanded(
       child: Column(
         children: [
-          Icon(icon, size: 20, color: Colors.white),
+          Icon(icon, size: 20, color: AppColors.textPrimary),
           const Gap(4),
-          Text(value,
-              style: AppTextStyles.headingSmall.copyWith(
-                  color: Colors.white, fontSize: 15)),
-          Text(label,
-              style: AppTextStyles.bodySmall
-                  .copyWith(color: Colors.white70, fontSize: 12)),
+          Text(
+            value,
+            style: AppTextStyles.headingSmall.copyWith(
+              color: AppColors.textPrimary,
+              fontSize: 15,
+            ),
+          ),
+          Text(
+            label,
+            style: AppTextStyles.bodySmall.copyWith(
+              color: AppColors.textSecondary,
+              fontSize: 12,
+            ),
+          ),
         ],
       ),
     );
@@ -944,57 +848,27 @@ class _Divider extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-        width: 1, height: 40, color: Colors.white.withOpacity(0.15));
+      width: 1,
+      height: 40,
+      color: AppColors.textPrimary.withOpacity(0.15),
+    );
   }
 }
 
 class _EmptyFeed extends StatelessWidget {
   const _EmptyFeed({this.hasActiveJob = false, this.onOpenActive});
-
   final bool hasActiveJob;
   final VoidCallback? onOpenActive;
 
   @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 28, 24, 120),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.search_rounded, size: 48,
-                color: AppColors.textSecondary),
-            const Gap(16),
-            Text(
-              hasActiveJob
-                  ? 'Your accepted job is under Active'
-                  : 'No jobs nearby right now',
-              style: AppTextStyles.headingSmall,
-              textAlign: TextAlign.center,
-            ),
-            const Gap(8),
-            Text(
-              hasActiveJob
-                  ? 'Open jobs leave this list once you accept them. Continue on the Active tab with Start OTP.'
-                  : 'New tasks appear here the moment someone posts near you. Stay on this screen.',
-              style: AppTextStyles.bodyMedium,
-              textAlign: TextAlign.center,
-            ),
-            if (hasActiveJob && onOpenActive != null) ...[
-              const Gap(20),
-              ElevatedButton(
-                onPressed: onOpenActive,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.helperAccent,
-                  foregroundColor: Colors.white,
-                ),
-                child: const Text('Open Active Job'),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => EmptyStateWidget(
+    icon: hasActiveJob ? Icons.work_outline_rounded : Icons.explore_outlined,
+    title: hasActiveJob ? 'Your job is ready' : 'No nearby jobs right now',
+    subtitle: hasActiveJob ? 'Continue your accepted job from the Active tab.' : 'New requests will appear here. Check again soon or refresh the list.',
+    color: AppColors.helperAccent,
+    actionLabel: hasActiveJob ? 'Open active job' : 'Refresh jobs',
+    onAction: hasActiveJob
+        ? onOpenActive
+        : () => context.read<TaskBloc>().add(TaskFetchNearbyTasks()),
+  );
 }

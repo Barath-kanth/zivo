@@ -285,7 +285,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                 decoration: InputDecoration(
                   hintText: '77 123 4567',
                   filled: true,
-                  fillColor: const Color(0xFFF3F3F3),
+                  fillColor: AppColors.surfaceDark,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide.none,
@@ -372,7 +372,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                   decoration: InputDecoration(
                     labelText: 'Recovery email',
                     filled: true,
-                    fillColor: const Color(0xFFF3F3F3),
+                    fillColor: AppColors.surfaceDark,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                       borderSide: BorderSide.none,

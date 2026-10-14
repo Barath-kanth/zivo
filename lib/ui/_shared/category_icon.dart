@@ -61,7 +61,7 @@ class CategoryIcon extends StatelessWidget {
 
   static const moreAssetPath = 'assets/icons/3d/setting.png';
 
-  /// Primary 8 for phone home (ZePay-style); rest live behind More.
+  /// Seven services plus More create two balanced rows on phones.
   static const mobilePrimary = <TaskCategory>[
     TaskCategory.groceryRun,
     TaskCategory.homeCleaning,
@@ -70,7 +70,6 @@ class CategoryIcon extends StatelessWidget {
     TaskCategory.driver,
     TaskCategory.movingHelp,
     TaskCategory.techHelp,
-    TaskCategory.homeCooking,
   ];
 
   static List<TaskCategory> get mobileOverflow => TaskCategory.values
@@ -124,6 +123,11 @@ class CategoryIcon extends StatelessWidget {
     }
   }
 
+  static bool usesSymbol(TaskCategory category) => const {
+    TaskCategory.laundry, TaskCategory.tailoring, TaskCategory.homeCooking,
+    TaskCategory.petCare, TaskCategory.elderCare, TaskCategory.driver,
+  }.contains(category);
+
   static Color accentFor(TaskCategory category) {
     switch (category) {
       case TaskCategory.groceryRun:
@@ -150,6 +154,9 @@ class CategoryIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (usesSymbol(category)) {
+      return Icon(iconFor(category), size: size, color: accentFor(category));
+    }
     return Image.asset(
       assetPathFor(category),
       width: size,
@@ -173,7 +180,16 @@ class CategoryIconBadge extends StatelessWidget {
     return SizedBox(
       width: size,
       height: size,
-      child: Image.asset(
+      child: CategoryIcon.usesSymbol(category)
+          ? DecoratedBox(
+              decoration: BoxDecoration(
+                color: CategoryIcon.accentFor(category).withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Icon(CategoryIcon.iconFor(category), size: size * 0.66,
+                color: CategoryIcon.accentFor(category)),
+            )
+          : Image.asset(
         CategoryIcon.assetPathFor(category),
         width: size,
         height: size,

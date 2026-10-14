@@ -330,6 +330,8 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
     }
   }
 
+  List<Task> peekNearbyTasks() => List<Task>.unmodifiable(_openNearbyOnly());
+
   List<Task> peekClientTasks() => List<Task>.unmodifiable(_localClientTasks);
 
   /// Persist demo OTP / status changes back into memory lists and notify UI.

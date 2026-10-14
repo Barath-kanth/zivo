@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
-import 'package:gap/gap.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 
-/// Reusable empty state placeholder used across all screens.
+/// Quiet, responsive empty/error state shared across both roles.
 class EmptyStateWidget extends StatelessWidget {
   const EmptyStateWidget({
     super.key,
@@ -14,7 +12,6 @@ class EmptyStateWidget extends StatelessWidget {
     this.actionLabel,
     this.onAction,
   });
-
   final IconData icon;
   final String title;
   final String subtitle;
@@ -23,52 +20,42 @@ class EmptyStateWidget extends StatelessWidget {
   final VoidCallback? onAction;
 
   @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 40),
+  Widget build(BuildContext context) => Center(
+    child: SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 360),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 80,
-              height: 80,
+              width: 88,
+              height: 88,
               decoration: BoxDecoration(
-                color: color.withOpacity(0.08),
-                borderRadius: BorderRadius.circular(20),
+                color: color.withValues(alpha: .07),
+                borderRadius: BorderRadius.circular(28),
               ),
-              child: Icon(icon, size: 36, color: color.withOpacity(0.7)),
-            ).animate()
-                .scale(duration: 500.ms, curve: Curves.easeOutCubic)
-                .fadeIn(duration: 300.ms),
-            const Gap(20),
+              child: Icon(icon, size: 38, color: color),
+            ),
+            const SizedBox(height: 20),
             Text(
               title,
-              style: AppTextStyles.headingSmall,
+              style: AppTextStyles.headingMedium,
               textAlign: TextAlign.center,
-            ).animate().fadeIn(delay: 100.ms, duration: 350.ms),
-            const Gap(8),
+            ),
+            const SizedBox(height: 8),
             Text(
               subtitle,
               style: AppTextStyles.bodyMedium,
               textAlign: TextAlign.center,
-            ).animate().fadeIn(delay: 150.ms, duration: 350.ms),
+            ),
             if (actionLabel != null && onAction != null) ...[
-              const Gap(28),
-              ElevatedButton(
-                onPressed: onAction,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: color,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                child: Text(actionLabel!, style: AppTextStyles.buttonLabel.copyWith(color: Colors.white)),
-              ).animate().fadeIn(delay: 200.ms, duration: 350.ms),
+              const SizedBox(height: 22),
+              FilledButton(onPressed: onAction, child: Text(actionLabel!)),
             ],
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
 }

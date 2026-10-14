@@ -1244,7 +1244,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
           onPressed: _goBack,
         ),
         title: Text(stepLabels[_step], style: AppTextStyles.headingSmall),
-        centerTitle: true,
+        centerTitle: false,
           actions: _step == 0
               ? [
           Padding(
@@ -1306,24 +1306,28 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
   // ── Progress bar ──────────────────────────────────────────────────────────
 
   Widget _buildProgressBar() {
+    const labels = ['Service', 'Details', 'Location', 'Review'];
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-      child: Row(
-        children: List.generate(4, (i) {
-          final done = i <= _step;
-          return Expanded(
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 300),
-              height: 3,
-              margin: const EdgeInsets.symmetric(horizontal: 3),
+      padding: const EdgeInsets.fromLTRB(20, 6, 20, 16),
+      child: Row(children: List.generate(labels.length, (i) => Expanded(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 3),
+          child: Column(children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180), height: 4,
               decoration: BoxDecoration(
-                color: done ? _catColor : AppColors.borderColor,
+                color: i <= _step ? AppColors.helperAccent : AppColors.borderColor,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
-          );
-        }),
-      ),
+            const SizedBox(height: 8),
+            Text(labels[i], style: AppTextStyles.bodySmall.copyWith(
+              color: i == _step ? AppColors.textPrimary : AppColors.textSecondary,
+              fontWeight: i == _step ? FontWeight.w700 : FontWeight.w400,
+            )),
+          ]),
+        ),
+      ))),
     );
   }
 
@@ -2535,6 +2539,12 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                   return rows;
                 }(),
                 const Divider(height: 18),
+                Wrap(spacing: 8, children: [
+                  TextButton.icon(onPressed: () => setState(() => _step = 1),
+                    icon: const Icon(Icons.edit_outlined, size: 16), label: const Text('Edit details')),
+                  TextButton.icon(onPressed: () => setState(() => _step = 2),
+                    icon: const Icon(Icons.place_outlined, size: 16), label: const Text('Edit location')),
+                ]),
                 _ReviewRow('Labor', AppConfig.money(total), bold: true),
                 if (_needsPurchaseTrust)
                   _ReviewRow('Goods budget', AppConfig.money(_goodsBudget)),

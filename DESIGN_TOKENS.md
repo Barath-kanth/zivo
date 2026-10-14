@@ -3,10 +3,10 @@
 | Role | Hex | Flutter |
 | --- | --- | --- |
 | Primary black / actions | #000000 | Color(0xFF000000) |
-| Background white | #FFFFFF | Color(0xFFFFFFFF) |
-| Surface grey | #F6F6F6 | Color(0xFFF6F6F6) |
-| Card grey | #F3F3F3 | Color(0xFFF3F3F3) |
-| Borders | #E2E2E2 | Color(0xFFE2E2E2) |
+| Background mint-white | #F7F9F7 | Color(0xFFF7F9F7) |
+| Surface grey | #EEF4EF | Color(0xFFEEF4EF) |
+| White card | #FFFFFF | Color(0xFFFFFFFF) |
+| Borders | #E2E8E3 | Color(0xFFE2E8E3) |
 | Secondary text | #545454 | Color(0xFF545454) |
 | Muted text | #686868 | Color(0xFF686868) |
 | Reference green / decorative accents | #06C167 | Color(0xFF06C167) |
@@ -19,4 +19,4 @@ Use black actions, white primary surfaces and grey grouping. Keep bright green f
 
 Font: bundled Inter. Display 32–40px / 700; headings 20–26px / 600–700; body 14–16px / 400; action labels 16px / 600. Financial display styles use tabular figures. This is an Uber-inspired hierarchy using Inter, not the proprietary Uber Move family.
 
-Components: shared vector service icons, 12–16px card corners, 22px navigation selections, 30px glass dock corners. Mobile glass navigation is retained; desktop uses a persistent sidebar at 1100px and above.
+Components: bundled 3D service icons with accurate native symbols where needed, 12–16px card corners, 22px navigation selections, 30px glass dock corners. Mobile glass navigation is retained; desktop uses a persistent sidebar at 1100px and above.

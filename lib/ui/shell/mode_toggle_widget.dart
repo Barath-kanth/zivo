@@ -27,7 +27,7 @@ class ModeToggleWidget extends StatelessWidget {
           child: Tooltip(
             message: isHelper ? 'Switch to Client mode' : 'Switch to Helper mode',
             child: Material(
-              color: AppColors.accent,
+              color: AppColors.helperAccent,
               borderRadius: BorderRadius.circular(22),
               clipBehavior: Clip.antiAlias,
               child: InkWell(
@@ -120,7 +120,7 @@ class ModeToggleWidget extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               modeState is ClientMode
-                  ? 'In Helper Mode, you\'ll see a live map of nearby tasks and earn money by helping others.'
+                  ? 'Find nearby tasks, manage your availability and track your earnings.'
                   : 'In Client Mode, you can post tasks, fund your wallet, and track helpers in real time.',
               style: AppTextStyles.bodyMedium,
             ),

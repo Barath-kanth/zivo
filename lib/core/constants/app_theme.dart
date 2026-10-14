@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import 'app_colors.dart';
 import 'app_text_styles.dart';
 
@@ -7,7 +8,7 @@ import 'app_text_styles.dart';
 abstract class AppTheme {
   static ThemeData get light {
     final shape = RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(16),
     );
     final buttonStyle = ElevatedButton.styleFrom(
       backgroundColor: AppColors.accent,
@@ -23,7 +24,7 @@ abstract class AppTheme {
     );
     OutlineInputBorder fieldBorder(Color color, [double width = 1]) =>
         OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide(color: color, width: width),
         );
 
@@ -52,7 +53,7 @@ abstract class AppTheme {
         onError: Colors.white,
       ),
       appBarTheme: const AppBarTheme(
-        backgroundColor: AppColors.backgroundDark,
+        backgroundColor: Colors.white,
         foregroundColor: AppColors.textPrimary,
         elevation: 0,
         scrolledUnderElevation: 0,
@@ -68,7 +69,7 @@ abstract class AppTheme {
         elevation: 0,
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(20),
           side: const BorderSide(color: AppColors.borderColor),
         ),
       ),
@@ -88,33 +89,46 @@ abstract class AppTheme {
         style: TextButton.styleFrom(
           foregroundColor: AppColors.textPrimary,
           minimumSize: const Size(48, 48),
-          textStyle: AppTextStyles.labelLarge.copyWith(fontWeight: FontWeight.w600),
+          textStyle: AppTextStyles.labelLarge.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
           shape: shape,
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: AppColors.surfaceDark,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+        fillColor: Colors.white,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 18,
+        ),
         border: fieldBorder(AppColors.borderColor),
-        enabledBorder: fieldBorder(Colors.transparent),
-        focusedBorder: fieldBorder(AppColors.accent, 2),
+        enabledBorder: fieldBorder(AppColors.borderColor),
+        focusedBorder: fieldBorder(AppColors.helperAccent, 2),
         errorBorder: fieldBorder(AppColors.errorColor),
         focusedErrorBorder: fieldBorder(AppColors.errorColor, 2),
         labelStyle: AppTextStyles.bodyMedium,
-        hintStyle: AppTextStyles.bodyMedium.copyWith(color: AppColors.textMuted),
-        errorStyle: AppTextStyles.bodySmall.copyWith(color: AppColors.errorColor),
+        hintStyle: AppTextStyles.bodyMedium.copyWith(
+          color: AppColors.textMuted,
+        ),
+        errorStyle: AppTextStyles.bodySmall.copyWith(
+          color: AppColors.errorColor,
+        ),
         errorMaxLines: 3,
         prefixIconColor: AppColors.textSecondary,
         suffixIconColor: AppColors.textSecondary,
       ),
       chipTheme: ChipThemeData(
-        backgroundColor: AppColors.surfaceDark,
-        selectedColor: AppColors.accent,
-        secondarySelectedColor: AppColors.accent,
-        labelStyle: AppTextStyles.labelLarge,
-        secondaryLabelStyle: AppTextStyles.labelLarge.copyWith(color: Colors.white),
-        side: BorderSide.none,
+        backgroundColor: Colors.white,
+        selectedColor: AppColors.brandGreenSoft,
+        secondarySelectedColor: AppColors.brandGreenSoft,
+        labelStyle: AppTextStyles.labelLarge.copyWith(
+          color: AppColors.textPrimary,
+        ),
+        secondaryLabelStyle: AppTextStyles.labelLarge.copyWith(
+          color: AppColors.helperAccent,
+        ),
+        side: const BorderSide(color: AppColors.borderColor),
         shape: const StadiumBorder(),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       ),
@@ -140,6 +154,33 @@ abstract class AppTheme {
         elevation: 0,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        titleTextStyle: AppTextStyles.headingMedium,
+        contentTextStyle: AppTextStyles.bodyMedium,
+      ),
+      tabBarTheme: const TabBarThemeData(
+        labelColor: AppColors.helperAccent,
+        unselectedLabelColor: AppColors.textMuted,
+        indicatorColor: AppColors.helperAccent,
+        dividerColor: AppColors.borderColor,
+        labelStyle: TextStyle(
+          fontFamily: 'Inter',
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      switchTheme: SwitchThemeData(
+        trackColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? AppColors.helperAccent
+              : AppColors.borderColor,
+        ),
+        thumbColor: const WidgetStatePropertyAll(Colors.white),
+        trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
+      ),
       listTileTheme: const ListTileThemeData(
         iconColor: AppColors.textPrimary,
         textColor: AppColors.textPrimary,
@@ -161,7 +202,9 @@ abstract class AppTheme {
       ),
       snackBarTheme: SnackBarThemeData(
         backgroundColor: AppColors.textPrimary,
-        contentTextStyle: AppTextStyles.bodyMedium.copyWith(color: Colors.white),
+        contentTextStyle: AppTextStyles.bodyMedium.copyWith(
+          color: Colors.white,
+        ),
         actionTextColor: Colors.white,
         shape: shape,
         behavior: SnackBarBehavior.floating,

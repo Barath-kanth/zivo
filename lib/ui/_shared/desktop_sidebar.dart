@@ -81,7 +81,7 @@ class DesktopSidebar extends StatelessWidget {
                       return Material(
                         color: on
                             ? AppColors.helperAccent.withValues(alpha: 0.12)
-                            : const Color(0xFFF6F6F6),
+                            : AppColors.backgroundDark,
                         borderRadius: BorderRadius.circular(12),
                         child: InkWell(
                           borderRadius: BorderRadius.circular(12),
@@ -166,7 +166,7 @@ class _NavTile extends StatelessWidget {
       button: true,
       label: item.label,
       child: Material(
-        color: selected ? AppColors.accent : Colors.transparent,
+        color: selected ? AppColors.brandGreenSoft : Colors.transparent,
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
@@ -178,7 +178,7 @@ class _NavTile extends StatelessWidget {
                 Icon(
                   selected ? item.activeIcon : item.icon,
                   size: 23,
-                  color: selected ? Colors.white : AppColors.textSecondary,
+                  color: selected ? AppColors.helperAccent : AppColors.textSecondary,
                 ),
                 const SizedBox(width: 14),
                 Expanded(
@@ -187,7 +187,7 @@ class _NavTile extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                      color: selected ? Colors.white : AppColors.textSecondary,
+                      color: selected ? AppColors.helperAccent : AppColors.textSecondary,
                     ),
                   ),
                 ),

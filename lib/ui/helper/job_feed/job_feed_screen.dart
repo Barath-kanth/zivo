@@ -103,7 +103,7 @@ class _JobFeedScreenState extends State<JobFeedScreen>
                         .scaleXY(end: 1.4, duration: 800.ms, curve: Curves.easeInOut),
                     const Gap(8),
                     Text(
-                      'Live Dispatch Feed',
+                      'Nearby opportunities',
                       style: AppTextStyles.bodyMedium.copyWith(
                         color: AppColors.helperAccent,
                         fontWeight: FontWeight.w600,
