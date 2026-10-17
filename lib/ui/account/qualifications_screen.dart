@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gap/gap.dart';
 import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
+import 'package:hyperlocal/core/constants/zivo_palette.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/data/models/helper_qualification.dart';
 import 'package:hyperlocal/data/repositories/profile_repository.dart';
@@ -78,10 +79,10 @@ class _QualificationsScreenState extends State<QualificationsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.backgroundDark,
+      backgroundColor: ZivoPalette.of(context).canvas,
       appBar: AppBar(
         title: Text('Qualifications', style: AppTextStyles.headingMedium),
-        backgroundColor: AppColors.backgroundDark,
+        backgroundColor: ZivoPalette.of(context).canvas,
         actions: [
           IconButton(
             onPressed: _openAddSheet,
@@ -141,7 +142,7 @@ class _QualificationsScreenState extends State<QualificationsScreen> {
                     return Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: AppColors.surfaceDark,
+                        color: ZivoPalette.of(context).surface,
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(color: AppColors.borderColor),
                       ),
@@ -175,8 +176,8 @@ class _QualificationsScreenState extends State<QualificationsScreen> {
                             const Gap(6),
                             Row(
                               children: [
-                                const Icon(Icons.attach_file,
-                                    size: 14, color: AppColors.textMuted),
+                                Icon(Icons.attach_file,
+                                    size: 14, color: ZivoPalette.of(context).textMuted),
                                 const Gap(4),
                                 Expanded(
                                   child: Text(
@@ -462,7 +463,7 @@ class _AddQualificationSheetState extends State<_AddQualificationSheet> {
                               : AppColors.borderColor,
                         ),
                         borderRadius: BorderRadius.circular(12),
-                        color: AppColors.surfaceDark,
+                        color: ZivoPalette.of(context).surface,
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -475,7 +476,7 @@ class _AddQualificationSheetState extends State<_AddQualificationSheet> {
                                     : Icons.upload_file_outlined,
                                 color: _docPath != null
                                     ? AppColors.successColor
-                                    : AppColors.textMuted,
+                                    : ZivoPalette.of(context).textMuted,
                               ),
                               const Gap(10),
                               Expanded(

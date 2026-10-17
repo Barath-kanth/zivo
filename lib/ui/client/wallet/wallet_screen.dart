@@ -7,9 +7,12 @@ import 'package:hyperlocal/blocs/wallet/wallet_bloc.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
 import 'package:hyperlocal/core/constants/app_config.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
+import 'package:hyperlocal/core/constants/zivo_palette.dart';
+import 'package:hyperlocal/core/l10n/locale_cubit.dart';
 import 'package:hyperlocal/data/models/wallet_ledger.dart';
 import 'package:hyperlocal/data/repositories/payment_repository.dart';
 import 'package:hyperlocal/ui/_shared/empty_state_widget.dart';
+import 'package:hyperlocal/ui/client/wallet/card_topup_sheet.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hyperlocal/blocs/mode/mode_cubit.dart';
 
@@ -22,6 +25,7 @@ class WalletScreen extends StatefulWidget {
 
 class _WalletScreenState extends State<WalletScreen> {
   final ScrollController _scrollController = ScrollController();
+  bool _toppingUp = false;
 
   @override
   void dispose() {
@@ -42,16 +46,26 @@ class _WalletScreenState extends State<WalletScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l = context.watch<LocaleCubit>();
+    final palette = ZivoPalette.of(context);
     return Scaffold(
-      backgroundColor: AppColors.backgroundDark,
+      backgroundColor: palette.canvas,
       appBar: AppBar(
-        backgroundColor: AppColors.backgroundDark,
+        backgroundColor: palette.canvas,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: AppColors.textPrimary, size: 20),
+          icon: Icon(Icons.arrow_back_ios_new_rounded,
+              color: palette.textPrimary, size: 18),
           onPressed: () => context.go('/'),
         ),
-        title: Text(context.watch<ModeCubit>().isHelperMode ? 'Earnings & wallet' : 'Wallet'),
+        title: Text(
+          context.watch<ModeCubit>().isHelperMode
+              ? l.t('wallet.earningsTitle')
+              : l.t('wallet.title'),
+          style: AppTextStyles.headingMedium.copyWith(
+            color: palette.textPrimary,
+          ),
+        ),
         centerTitle: false,
       ),
       body: BlocBuilder<WalletBloc, WalletState>(
@@ -61,7 +75,6 @@ class _WalletScreenState extends State<WalletScreen> {
               child: CircularProgressIndicator(color: AppColors.accent),
             );
           }
-
           if (state is WalletFailure) {
             return EmptyStateWidget(
               icon: Icons.error_outline_rounded,
@@ -71,262 +84,186 @@ class _WalletScreenState extends State<WalletScreen> {
               actionLabel: 'Try again',
               onAction: () {
                 final auth = context.read<AuthBloc>().state;
-                if (auth is AuthAuthenticated) context.read<WalletBloc>().add(WalletFetchRequested(auth.profile.id));
+                if (auth is AuthAuthenticated) {
+                  context
+                      .read<WalletBloc>()
+                      .add(WalletFetchRequested(auth.profile.id));
+                }
               },
             );
           }
-
           if (state is WalletLoaded) {
-            return _buildWalletBody(
-              walletBalance: state.walletBalance,
-              escrowBalance: state.escrowBalance,
-              helperEarnings: state.helperEarnings,
-              entries: state.entries,
-            );
+            return _buildBody(state);
           }
-
           return const SizedBox.shrink();
         },
       ),
     );
   }
 
-  Widget _buildWalletBody({
-    required double walletBalance,
-    required double escrowBalance,
-    required double helperEarnings,
-    required List<WalletLedgerEntry> entries,
-  }) {
+  Widget _buildBody(WalletLoaded state) {
+    final l = context.watch<LocaleCubit>();
+    final entries = state.entries.where((e) => e.amount.abs() > 0).toList();
+
     return CustomScrollView(
       controller: _scrollController,
       slivers: [
-        _buildHeroCard(walletBalance, escrowBalance, helperEarnings),
-        _buildActionButtons(),
-        _buildLedgerHeader(),
-        _buildLedger(entries),
-        const SliverToBoxAdapter(child: Gap(100)),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l.t('wallet.available'),
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    color: AppColors.textMuted,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const Gap(6),
+                Text(
+                  AppConfig.money(state.walletBalance),
+                  style: AppTextStyles.moneyHero,
+                ),
+                const Gap(18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _StatPill(
+                        label: l.t('wallet.escrow'),
+                        value: AppConfig.money(state.escrowBalance),
+                        icon: Icons.lock_outline_rounded,
+                      ),
+                    ),
+                    const Gap(10),
+                    Expanded(
+                      child: _StatPill(
+                        label: l.t('wallet.helperEarned'),
+                        value: AppConfig.money(state.helperEarnings),
+                        icon: Icons.trending_up_rounded,
+                      ),
+                    ),
+                  ],
+                ),
+                const Gap(20),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: _toppingUp ? null : _showTopUpSheet,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.black,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size.fromHeight(48),
+                      maximumSize: const Size.fromHeight(48),
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    child: _toppingUp
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Text(
+                            l.t('wallet.topUp'),
+                            style: AppTextStyles.buttonLabel.copyWith(
+                              color: Colors.white,
+                              height: 1.1,
+                            ),
+                          ),
+                  ),
+                ),
+                const Gap(28),
+                Text(l.t('wallet.transactions'),
+                    style: AppTextStyles.headingSmall),
+                const Gap(8),
+              ],
+            ).animate().fadeIn(duration: 280.ms),
+          ),
+        ),
+        if (entries.isEmpty)
+          SliverPadding(
+            padding: EdgeInsets.only(
+              bottom: 28 + MediaQuery.paddingOf(context).bottom + 80,
+            ),
+            sliver: SliverFillRemaining(
+              hasScrollBody: false,
+              child: EmptyStateWidget(
+                icon: Icons.receipt_long_outlined,
+                title: l.t('wallet.emptyTitle'),
+                subtitle: l.t('wallet.emptySubtitle'),
+                color: AppColors.textMuted,
+              ),
+            ),
+          )
+        else
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(
+              20,
+              0,
+              20,
+              28 + MediaQuery.paddingOf(context).bottom + 80,
+            ),
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (ctx, i) => _LedgerRow(entry: entries[i]),
+                childCount: entries.length,
+              ),
+            ),
+          ),
       ],
     );
   }
 
-  // ── Hero balance card ─────────────────────────────────────────────────────
-
-  Widget _buildHeroCard(
-      double wallet, double escrow, double earnings) {
-    return SliverToBoxAdapter(
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-        padding: const EdgeInsets.all(22),
-        decoration: BoxDecoration(
-          color: AppColors.brandGreenSoft,
-          border: Border.all(color: AppColors.borderColor),
-          borderRadius: BorderRadius.circular(24),
-          boxShadow: [
-            BoxShadow(
-              color: AppColors.accent.withValues(alpha: 0.04),
-              blurRadius: 24,
-              offset: const Offset(0, 10),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.account_balance_wallet_rounded,
-                    color: AppColors.textSecondary, size: 18),
-                const Gap(8),
-                Text(
-                  'Available Balance',
-                  style: AppTextStyles.bodyMedium
-                      .copyWith(color: AppColors.textSecondary),
-                ),
-              ],
-            ),
-            const Gap(10),
-            Text(
-              AppConfig.money(wallet),
-              style: const TextStyle(
-                fontFamily: 'Inter',
-                fontSize: 36,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textPrimary,
-                letterSpacing: -0.5,
-              ),
-            ),
-            const Gap(16),
-            Row(
-              children: [
-                _MiniStat(
-                  icon: Icons.lock_clock_rounded,
-                  label: 'In Escrow',
-                   value: AppConfig.money(escrow),
-                  color: AppColors.statusMatched,
-                ),
-                Container(
-                    width: 1,
-                    height: 30,
-                    color: AppColors.borderColor,
-                    margin: const EdgeInsets.symmetric(horizontal: 16)),
-                _MiniStat(
-                  icon: Icons.savings_rounded,
-                  label: 'Helper Earned',
-                   value: AppConfig.money(earnings),
-                  color: AppColors.helperAccent,
-                ),
-              ],
-            ),
-          ],
-        ),
-      ).animate().fadeIn(duration: 350.ms).slideY(begin: 0.1),
-    );
-  }
-
-  // ── Action buttons ────────────────────────────────────────────────────────
-
-  Widget _buildActionButtons() {
-    return SliverToBoxAdapter(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-        child: Row(
-          children: [
-            Expanded(
-              child: _ActionBtn(
-                icon: Icons.add_rounded,
-                label: 'Top Up',
-                color: AppColors.accent,
-                onTap: _showTopUpSheet,
-              ).animate(delay: 80.ms).fadeIn(),
-            ),
-            const Gap(10),
-            Expanded(
-              child: _ActionBtn(
-                icon: Icons.send_rounded,
-                label: 'Transfer · soon',
-                color: AppColors.helperAccent,
-                onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                      content: Text('Transfer — coming soon')),
-                ),
-              ).animate(delay: 140.ms).fadeIn(),
-            ),
-            const Gap(10),
-            Expanded(
-              child: _ActionBtn(
-                icon: Icons.history_rounded,
-                label: 'History',
-                color: AppColors.catDocument,
-                onTap: () {
-                  _scrollController.animateTo(
-                    310,
-                    duration: const Duration(milliseconds: 400),
-                    curve: Curves.easeInOutCubic,
-                  );
-                },
-              ).animate(delay: 200.ms).fadeIn(),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ── Ledger ────────────────────────────────────────────────────────────────
-
-  Widget _buildLedgerHeader() {
-    return SliverToBoxAdapter(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
-        child: Row(
-          children: [
-            Text('Transactions', style: AppTextStyles.headingSmall),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLedger(List<WalletLedgerEntry> entries) {
-    if (entries.isEmpty) {
-      return SliverFillRemaining(
-        child: EmptyStateWidget(
-          icon: Icons.receipt_long_outlined,
-          title: 'No transactions yet',
-          subtitle: 'Top up your wallet to start posting tasks',
-          color: AppColors.textMuted,
-        ),
-      );
-    }
-
-    return SliverPadding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      sliver: SliverList(
-        delegate: SliverChildBuilderDelegate(
-          (ctx, i) => _LedgerTile(entry: entries[i], index: i),
-          childCount: entries.length,
-        ),
-      ),
-    );
-  }
-
-  // ── Top-up sheet ──────────────────────────────────────────────────────────
-
-  Future<void> _startTopUp(double amount) async {
+  Future<void> _showTopUpSheet() async {
     final auth = context.read<AuthBloc>().state;
     if (auth is! AuthAuthenticated) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sign in to top up')),
+        SnackBar(content: Text(context.read<LocaleCubit>().t('wallet.signIn'))),
       );
       return;
     }
+    if (_toppingUp) return;
 
+    final card = await showCardTopUpSheet(context);
+    if (card == null || !mounted) return;
+
+    setState(() => _toppingUp = true);
     final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          AppConfig.demoAllowed
-              ? 'Crediting ${AppConfig.money(amount, decimals: 2)}…'
-              : 'Opening PayHere for ${AppConfig.money(amount, decimals: 2)}…',
-        ),
-      ),
-    );
+    final brandLabel = switch (card.brand) {
+      CardBrand.visa => 'Visa',
+      CardBrand.mastercard => 'Mastercard',
+      CardBrand.amex => 'Amex',
+      CardBrand.unknown => 'Card',
+    };
 
     try {
-      final result = await context.read<PaymentRepository>().startTopUp(
+      await context.read<PaymentRepository>().startTopUp(
             userId: auth.profile.id,
-            amount: amount,
+            amount: card.amount,
             firstName: auth.profile.fullName.split(' ').first,
             phone: auth.profile.phone,
             email: auth.profile.email,
+            cardBrand: brandLabel.toLowerCase(),
+            cardLast4: card.last4,
           );
-
       if (!mounted) return;
-
-      if (result == 'demo_credited') {
-        context.read<WalletBloc>().add(WalletFetchRequested(auth.profile.id));
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(
-              '${AppConfig.money(amount, decimals: 2)} added to wallet (demo).',
-            ),
-            backgroundColor: AppColors.successColor,
+      context.read<WalletBloc>().add(WalletFetchRequested(auth.profile.id));
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            '${AppConfig.money(card.amount, decimals: 2)} · $brandLabel •••• ${card.last4}',
           ),
-        );
-      } else {
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Complete payment in PayHere. Your wallet updates when payment succeeds.',
-            ),
-          ),
-        );
-        // Refresh after user returns from browser
-        Future<void>.delayed(const Duration(seconds: 2), () {
-          if (!mounted) return;
-          context.read<WalletBloc>().add(WalletFetchRequested(auth.profile.id));
-        });
-      }
+          backgroundColor: AppColors.successColor,
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(
@@ -335,244 +272,123 @@ class _WalletScreenState extends State<WalletScreen> {
           backgroundColor: AppColors.errorColor,
         ),
       );
+    } finally {
+      if (mounted) setState(() => _toppingUp = false);
     }
   }
-
-  void _showTopUpSheet() {
-    // LKR top-up amounts
-    final amounts = [1000.0, 2500.0, 5000.0, 10000.0];
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppColors.cardDark,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.borderColor,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const Gap(20),
-            Text('Top Up Wallet', style: AppTextStyles.headingMedium),
-            const Gap(4),
-            Text(
-              AppConfig.demoAllowed
-                  ? 'Demo mode — credits instantly (no card charge).'
-                  : 'Pay securely with PayHere (card / LankaQR).',
-              style: AppTextStyles.bodyMedium,
-            ),
-            const Gap(20),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: amounts
-                  .map((amt) => GestureDetector(
-                        onTap: () {
-                          Navigator.pop(ctx);
-                          _startTopUp(amt);
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 22, vertical: 14),
-                          decoration: BoxDecoration(
-                            color:
-                                AppColors.accent.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                                color:
-                                    AppColors.accent.withValues(alpha: 0.4)),
-                          ),
-                          child: Text(
-                            AppConfig.money(amt),
-                            style: AppTextStyles.headingSmall
-                                .copyWith(color: AppColors.accent),
-                          ),
-                        ),
-                      ))
-                  .toList(),
-            ),
-            const Gap(12),
-            Text(
-              AppConfig.demoAllowed
-                  ? 'Production builds use PayHere — merchant secrets stay on the server.'
-                  : 'Payments via PayHere (Sampath / ComBank / BOC / LankaQR).',
-              style: AppTextStyles.bodySmall
-                  .copyWith(color: AppColors.textMuted),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
-// ── Sub-widgets ───────────────────────────────────────────────────────────────
-
-class _MiniStat extends StatelessWidget {
-  const _MiniStat(
-      {required this.icon,
-      required this.label,
-      required this.value,
-      required this.color});
-  final IconData icon;
+class _StatPill extends StatelessWidget {
+  const _StatPill({
+    required this.label,
+    required this.value,
+    required this.icon,
+  });
   final String label;
   final String value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(icon, color: color, size: 12),
-            const Gap(4),
-            Flexible(
-              child: Text(label,
-                style: AppTextStyles.bodySmall
-                    .copyWith(color: AppColors.textSecondary, fontSize: 12)),
-            ),
-          ],
-        ),
-        const Gap(2),
-        Text(value,
-            style: AppTextStyles.headingSmall
-                .copyWith(color: AppColors.textPrimary, fontSize: 13)),
-      ],
-      ),
-    );
-  }
-}
-
-class _ActionBtn extends StatelessWidget {
-  const _ActionBtn({
-    required this.icon,
-    required this.label,
-    required this.color,
-    required this.onTap,
-  });
   final IconData icon;
-  final String label;
-  final Color color;
-  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.borderColor),
-        ),
-        child: Column(
-          children: [
-            Icon(icon, color: color, size: 20),
-            const Gap(5),
-            Text(
-              label,
-              style: AppTextStyles.bodySmall
-                  .copyWith(color: color, fontSize: 11, fontWeight: FontWeight.w600),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _LedgerTile extends StatelessWidget {
-  const _LedgerTile({required this.entry, required this.index});
-  final WalletLedgerEntry entry;
-  final int index;
-
-  @override
-  Widget build(BuildContext context) {
-    final isCredit = entry.entryType.isCredit;
-    final color =
-        isCredit ? AppColors.successColor : AppColors.errorColor;
-
+    final palette = ZivoPalette.of(context);
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding:
-          const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       decoration: BoxDecoration(
-        color: AppColors.cardDark,
+        color: palette.card,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.borderColor),
+        border: Border.all(color: palette.border),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(
-              isCredit
-                  ? Icons.north_east_rounded
-                  : Icons.south_west_rounded,
-              color: color,
-              size: 17,
-            ),
-          ),
-          const Gap(12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(entry.entryType.displayName,
-                    style: AppTextStyles.headingSmall
-                        .copyWith(fontSize: 13)),
-                if (entry.description != null)
-                  Text(
-                    entry.description!,
-                    style: AppTextStyles.bodySmall,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+          Row(
+            children: [
+              Icon(icon, size: 14, color: palette.textMuted),
+              const Gap(6),
+              Flexible(
+                child: Text(
+                  label,
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: palette.textMuted,
+                    fontSize: 11,
                   ),
-                Text(
-                  _formatDate(entry.createdAt),
-                  style: AppTextStyles.bodySmall
-                      .copyWith(color: AppColors.textMuted, fontSize: 12),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
+          const Gap(6),
           Text(
-            '${isCredit ? '+' : '-'}${AppConfig.money(entry.amount)}',
-            style:
-                AppTextStyles.headingSmall.copyWith(color: color, fontSize: 13),
+            value,
+            style: AppTextStyles.moneyStat.copyWith(color: palette.textPrimary),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
-    )
-        .animate(delay: Duration(milliseconds: index * 40))
-        .fadeIn(duration: 300.ms)
-        .slideX(begin: 0.05);
+    );
+  }
+}
+
+class _LedgerRow extends StatelessWidget {
+  const _LedgerRow({required this.entry});
+  final WalletLedgerEntry entry;
+
+  String _cleanDesc(String? raw) {
+    if (raw == null || raw.isEmpty) return '';
+    return raw
+        .replaceAll(RegExp(r'\s*\(GCP demo\)', caseSensitive: false), '')
+        .trim();
   }
 
-  String _formatDate(DateTime dt) {
-    final now = DateTime.now();
-    final diff = now.difference(dt);
+  @override
+  Widget build(BuildContext context) {
+    final credit = entry.entryType.isCredit;
+    final color = credit ? AppColors.successColor : AppColors.textPrimary;
+    final desc = _cleanDesc(entry.description);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        leading: CircleAvatar(
+          radius: 18,
+          backgroundColor: credit
+              ? AppColors.brandGreenSoft
+              : const Color(0xFFF0F0F0),
+          child: Icon(
+            credit ? Icons.south_west_rounded : Icons.north_east_rounded,
+            size: 16,
+            color: color,
+          ),
+        ),
+        title: Text(
+          entry.entryType.displayName,
+          style: AppTextStyles.bodyLarge.copyWith(fontWeight: FontWeight.w600),
+        ),
+        subtitle: Text(
+          [
+            if (desc.isNotEmpty) desc,
+            _ago(entry.createdAt),
+          ].join(' · '),
+          style: AppTextStyles.bodySmall.copyWith(color: AppColors.textMuted),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: Text(
+          '${credit ? '+' : '−'}${AppConfig.money(entry.amount.abs())}',
+          style: AppTextStyles.headingSmall.copyWith(
+            color: color,
+            fontSize: 14,
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _ago(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
     if (diff.inMinutes < 1) return 'Just now';
     if (diff.inHours < 1) return '${diff.inMinutes}m ago';
     if (diff.inDays < 1) return '${diff.inHours}h ago';

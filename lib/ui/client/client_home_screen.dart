@@ -12,6 +12,8 @@ import 'package:go_router/go_router.dart';
 import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
 import 'package:hyperlocal/blocs/task/task_bloc.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
+import 'package:hyperlocal/core/constants/zivo_palette.dart';
+
 import 'package:hyperlocal/core/constants/app_config.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/router/app_router.dart';
@@ -23,8 +25,15 @@ import 'package:hyperlocal/data/repositories/task_repository.dart';
 import 'package:hyperlocal/ui/_shared/zivo_logo.dart';
 import 'package:hyperlocal/ui/_shared/task_status_badge.dart';
 import 'package:hyperlocal/ui/_shared/mode_cover_banner.dart';
+import 'package:hyperlocal/ui/_shared/cover_top_bar_actions.dart';
 import 'package:hyperlocal/ui/_shared/trust_review_sheet.dart';
 import 'package:hyperlocal/ui/_shared/a11y_widgets.dart';
+import 'package:hyperlocal/ui/_shared/a11y_landmarks.dart';
+import 'package:hyperlocal/ui/_shared/chat_unread_badge.dart';
+import 'package:hyperlocal/ui/_shared/care_network_strip.dart';
+import 'package:hyperlocal/ui/_shared/task_bundle_sheet.dart';
+import 'package:hyperlocal/ui/_shared/task_journey_sheet.dart';
+import 'package:hyperlocal/core/l10n/locale_cubit.dart';
 import 'package:hyperlocal/blocs/mode/mode_cubit.dart';
 
 enum ClientHomePane {
@@ -72,16 +81,16 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     super.initState();
     _refreshClientTasks(silent: false);
 
-    // Quiet poll only while a job needs Start/End OTP (no full-page flash).
-    _refreshTimer = Timer.periodic(const Duration(seconds: 12), (_) {
+    // Quiet poll while a live job needs OTP / proof — 3s so proof shows fast.
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       final bloc = context.read<TaskBloc>();
       final tasks = bloc.peekClientTasks();
-      final needsOtp = tasks.any(
+      final needsLive = tasks.any(
         (t) =>
             t.status == TaskStatus.matched ||
             t.status == TaskStatus.inProgress,
       );
-      if (needsOtp) _refreshClientTasks(silent: true);
+      if (needsLive) _refreshClientTasks(silent: true);
       _refreshStreetBatches();
       _refreshLiveHelpers();
     });
@@ -172,157 +181,140 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
       case TaskCategory.eventHelp:         return AppColors.catEvent;
       case TaskCategory.photography:       return AppColors.catPhoto;
       case TaskCategory.homeRepair:        return AppColors.catRepair;
-      case TaskCategory.other:             return AppColors.textMuted;
+      case TaskCategory.phoneCheckIn:      return AppColors.catElderCare;
+      case TaskCategory.readingAloud:      return AppColors.catTutoring;
+      case TaskCategory.remoteTutoring:    return AppColors.catTutoring;
+      case TaskCategory.sightedAssist:     return AppColors.catTech;
+      case TaskCategory.other:             return const Color(0xFF6B6B6B);
     }
   }
 
   Widget _buildServicesColumn() {
     return CustomScrollView(
       key: const PageStorageKey('client-desktop-services'),
-      slivers: [
+        slivers: [
         _buildCoverHeader(),
-        _buildSectionTitle('What do you need help with?'),
-        _buildCategoryGrid(),
-        _buildWalletStrip(),
-        const SliverToBoxAdapter(child: Gap(100)),
-      ],
+        _buildSplitTasksCard(),
+          _buildSectionTitle('What do you need help with?'),
+          _buildCategoryGrid(),
+          const SliverToBoxAdapter(child: CareNetworkStrip()),
+          const SliverToBoxAdapter(child: Gap(100)),
+        ],
     );
   }
 
-  Widget _buildCoverHeader() {
+  /// Original split promo — compact type + consistent icon.
+  Widget _buildSplitTasksCard() {
+    final palette = ZivoPalette.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return SliverToBoxAdapter(
-      child: ModeCoverBanner(
-        isHelper: false,
-        height: 190,
-        searchHint: 'What do you need help with?',
-        onSearchTap: _searchServices,
-        onModeTap: () {
-          final mode = context.read<ModeCubit>();
-          if (mode.state is! ModeToggling) mode.toggleMode();
-        },
-        trailing: BlocBuilder<AuthBloc, AuthState>(
-          builder: (context, state) {
-            final profile =
-                state is AuthAuthenticated ? state.profile : null;
-            final initial = profile?.displayInitial ?? '?';
-            final avatarUrl = profile?.avatarUrl;
-            final hasAvatar =
-                avatarUrl != null && avatarUrl.startsWith('http');
-            return Material(
-              color: Colors.white.withValues(alpha: 0.92),
-              shape: const CircleBorder(),
-              child: InkWell(
-                customBorder: const CircleBorder(),
-                onTap: () => context.go(AppRoutes.account),
-                child: CircleAvatar(
-                  radius: 16,
-                  backgroundColor: Colors.white,
-                  backgroundImage:
-                      hasAvatar ? NetworkImage(avatarUrl) : null,
-                  child: hasAvatar
-                      ? null
-                      : Text(
-                          initial,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 12,
-                            color: Colors.black,
-                          ),
-                        ),
-                ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 2, 16, 6),
+        child: Material(
+          color: isDark ? palette.helperSoft : const Color(0xFFECFDF5),
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: () async {
+              if (!await requireAuth(context, returnTo: AppRoutes.shell)) {
+                return;
+              }
+              if (!mounted) return;
+              await showTaskBundlePlanner(context);
+            },
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              child: Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: palette.accent.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      Icons.dashboard_customize_rounded,
+                      color: palette.accent,
+                      size: 18,
+                    ),
+                  ),
+                  const Gap(10),
+                  Expanded(
+                    child: Builder(
+                      builder: (context) {
+                        String title = 'Split into several tasks';
+                        String body =
+                            'One big problem → a few small neighbour jobs.';
+                        try {
+                          final l = context.watch<LocaleCubit>();
+                          title = l.t('home.splitTitle');
+                          body = l.t('home.splitBody');
+                        } catch (_) {}
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+                            Text(
+                              title,
+                              style: AppTextStyles.bodySmall.copyWith(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13,
+                                color: palette.textPrimary,
+                              ),
+                            ),
+                            const Gap(1),
+                            Text(
+                              body,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: AppTextStyles.bodySmall.copyWith(
+                                color: palette.textMuted,
+                                fontSize: 11,
+                                height: 1.25,
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: palette.accent,
+                    size: 18,
+                  ),
+                ],
               ),
-            );
-          },
+            ),
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildWalletStrip() {
+  Widget _buildCoverHeader() {
+    // Desktop: logo · wallet + account (right). Mobile: logo · wallet only.
+    final desktop = widget.forceDesktopChrome ||
+        widget.pane == ClientHomePane.servicesOnly ||
+        CoverTopBarActions.isDesktop(context);
     return SliverToBoxAdapter(
-      child: BlocBuilder<AuthBloc, AuthState>(
-        builder: (context, state) {
-          final profile = state is AuthAuthenticated ? state.profile : null;
-          final wallet = profile?.walletBalance ?? 0.0;
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.borderColor),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.04),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  const ZivoLogo(size: 28),
-                  const Gap(10),
-                  Expanded(
-                    child: Text(
-                      AppConfig.money(wallet),
-                      style: AppTextStyles.moneyMedium.copyWith(fontSize: 20),
-                    ),
-                  ),
-                  _miniAction(
-                    icon: Icons.north_east_rounded,
-                    label: 'Wallet',
-                    onTap: () => context.go(AppRoutes.wallet),
-                  ),
-
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _miniAction({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: Column(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: AppColors.surfaceDark,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, size: 18, color: Colors.black),
-          ),
-          const Gap(2),
-          Text(
-            label,
-            style: AppTextStyles.bodySmall.copyWith(
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
+      child: ModeCoverBanner(
+        isHelper: false,
+        height: 176,
+        searchHint: 'What do you need help with?',
+        onSearchTap: _searchServices,
+        trailing: CoverTopBarActions(showAccount: desktop),
       ),
     );
   }
 
   Widget _buildActivityRail() {
+    final palette = ZivoPalette.of(context);
     return Container(
       width: 320,
-      decoration: const BoxDecoration(
-        color: AppColors.surfaceDark,
-        border: Border(left: BorderSide(color: AppColors.borderColor)),
+                decoration: BoxDecoration(
+        color: palette.surface,
+        border: Border(left: BorderSide(color: palette.border)),
       ),
       child: SafeArea(
         child: CustomScrollView(
@@ -330,8 +322,6 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           slivers: [
             _buildSectionTitle('Your active tasks'),
             _buildMyTasks(),
-            _buildSectionTitle('Around your neighbourhood'),
-            _buildLocationControl(),
             _buildInstantDispatchCard(),
             _buildStreetBatchCard(),
             _buildNeighborVouchCard(),
@@ -347,34 +337,71 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   Widget build(BuildContext context) {
     if (widget.pane == ClientHomePane.tasksOnly) {
       return Scaffold(
-        appBar: AppBar(title: const Text('My tasks'), actions: [
-          IconButton(tooltip: 'Refresh tasks', onPressed: () => _refreshClientTasks(),
-            icon: const Icon(Icons.refresh_rounded)),
-          TextButton(onPressed: _searchServices, child: const Text('New task')),
-        ]),
-        body: CustomScrollView(slivers: [
-          SliverToBoxAdapter(child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
-            child: Wrap(spacing: 8, runSpacing: 8, children: [
-              for (final filter in ['Active', 'Completed', 'All'])
-                ChoiceChip(label: Text(filter), selected: _taskFilter == filter,
-                  onSelected: (_) => setState(() => _taskFilter = filter)),
-            ]),
-          )),
-          _buildMyTasks(),
-          const SliverToBoxAdapter(child: SizedBox(height: 120)),
-        ]),
+        appBar: AppBar(
+          title: const Text('My tasks'),
+          actions: [
+            IconButton(
+              tooltip: 'Refresh tasks',
+              onPressed: () => _refreshClientTasks(),
+              icon: const Icon(Icons.refresh_rounded),
+            ),
+            TextButton(
+              onPressed: _searchServices,
+              child: const Text('New task'),
+            ),
+          ],
+        ),
+        body: A11yLandmark.main(
+          label: 'My tasks',
+          child: CustomScrollView(slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                child: A11yHeading(
+                  text: 'My tasks',
+                  level: 1,
+                  style: AppTextStyles.headingMedium.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                child: Semantics(
+                  label: 'Task filters',
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final filter in ['Active', 'Completed', 'All'])
+                        ChoiceChip(
+                          label: Text(filter),
+                          selected: _taskFilter == filter,
+                          onSelected: (_) =>
+                              setState(() => _taskFilter = filter),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            _buildMyTasks(),
+            const SliverToBoxAdapter(child: SizedBox(height: 120)),
+          ]),
+        ),
       );
     }
     if (widget.pane == ClientHomePane.railOnly) {
       return ColoredBox(
-        color: AppColors.surfaceDark,
+        color: ZivoPalette.of(context).surface,
         child: _buildActivityRail(),
       );
     }
 
     return Scaffold(
-      backgroundColor: AppColors.backgroundDark,
+      backgroundColor: ZivoPalette.of(context).canvas,
       body: LayoutBuilder(
         builder: (context, constraints) {
           final desktop =
@@ -398,18 +425,21 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
             key: const PageStorageKey('client-mobile-home'),
             slivers: [
               _buildCoverHeader(),
-              _buildSectionTitle('Everyday help, sorted'),
+              _buildSplitTasksCard(),
+              _buildSectionTitle('What do you need help with?'),
               _buildCategoryGrid(compact: true),
+              const SliverToBoxAdapter(child: CareNetworkStrip()),
               _buildSectionTitle('Your active tasks'),
               _buildMyTasks(),
-              SliverToBoxAdapter(child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: TextButton(onPressed: () => context.go(AppRoutes.myTasks),
-                  child: const Text('View all tasks')),
-              )),
-              _buildWalletStrip(),
-              _buildSectionTitle('Around your neighbourhood'),
-              _buildLocationControl(),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: TextButton(
+                    onPressed: () => context.go(AppRoutes.myTasks),
+                    child: const Text('View all tasks'),
+                  ),
+                ),
+              ),
               _buildInstantDispatchCard(),
               _buildStreetBatchCard(),
               _buildNeighborVouchCard(),
@@ -425,7 +455,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   Widget _buildHeader() {
     return SliverToBoxAdapter(
       child: Container(
-        decoration: const BoxDecoration(color: AppColors.backgroundDark),
+        decoration: BoxDecoration(color: ZivoPalette.of(context).canvas),
         child: Stack(
           children: [
             SafeArea(
@@ -455,8 +485,6 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                 const ZivoLogo(
                                   size: 34,
                                   showWordmark: true,
-                                  markOnDark: false,
-                                  wordmarkColor: AppColors.textPrimary,
                                 ),
                                 const Spacer(),
                                 Material(
@@ -502,13 +530,13 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                               color: AppColors.textPrimary,
                                               fontWeight: FontWeight.w600,
                                             ),
-                                          ),
+                                            ),
                                           ),
                                           const Gap(2),
                                           Icon(
                                             Icons.keyboard_arrow_down_rounded,
                                             size: 18,
-                                            color: AppColors.textSecondary,
+                                            color: ZivoPalette.of(context).textSecondary,
                                           ),
                                         ],
                                       ),
@@ -522,17 +550,11 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                 .slideY(
                                     begin: -0.15, curve: Curves.easeOut),
                             const Gap(28),
-                            // Primary service heading
+                            // Primary service heading — same scale family as mobile.
                             Text(
                               'Who can help\nyou today?',
                               textAlign: TextAlign.left,
-                              style: AppTextStyles.displayMedium.copyWith(
-                                color: AppColors.textPrimary,
-                                fontSize: 32,
-                                height: 1.15,
-                                letterSpacing: -1.2,
-                                fontWeight: FontWeight.w800,
-                              ),
+                              style: AppTextStyles.pageTitle(context),
                             )
                                 .animate()
                                 .fadeIn(delay: 80.ms, duration: 450.ms)
@@ -544,7 +566,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                               'Trusted help nearby — queues, chores, care.',
                               textAlign: TextAlign.left,
                               style: AppTextStyles.bodyMedium.copyWith(
-                                color: AppColors.textSecondary,
+                                color: ZivoPalette.of(context).textSecondary,
                                 fontSize: 14,
                               ),
                             )
@@ -619,8 +641,9 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     required Color accent,
     required VoidCallback onTap,
   }) {
+    final palette = ZivoPalette.of(context);
     return Material(
-      color: AppColors.surfaceDark,
+      color: palette.card,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         onTap: onTap,
@@ -629,9 +652,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: AppColors.surfaceDark,
-            ),
+            border: Border.all(color: palette.border),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -640,7 +661,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: accent.withValues(alpha: 0.14),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(icon, size: 20, color: accent),
@@ -650,7 +671,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                 label,
                 textAlign: TextAlign.left,
                 style: AppTextStyles.bodyMedium.copyWith(
-                  color: AppColors.textPrimary,
+                  color: palette.textPrimary,
                   fontWeight: FontWeight.w700,
                   fontSize: 14,
                 ),
@@ -661,9 +682,9 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                 textAlign: TextAlign.left,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: AppTextStyles.bodySmall.copyWith(
-                  color: AppColors.textSecondary,
-                  fontSize: 11,
+                style: AppTextStyles.moneyMeta.copyWith(
+                  color: palette.textSecondary,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ],
@@ -692,22 +713,23 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             decoration: BoxDecoration(
-              color: AppColors.cardDark,
+              color: ZivoPalette.of(context).card,
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.borderColor),
+              border: Border.all(color: ZivoPalette.of(context).border),
             ),
             child: Row(
               children: [
-                const Icon(Icons.search_rounded,
-                    color: AppColors.textMuted, size: 20),
+                Icon(Icons.search_rounded,
+                    color: ZivoPalette.of(context).textMuted, size: 20),
                 const Gap(10),
                 Expanded(
                   child: Text(
-                    'Describe what you need help with…',
+                  'Describe what you need help with…',
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: AppTextStyles.bodyLarge.copyWith(
                       fontWeight: FontWeight.w600,
+                      color: ZivoPalette.of(context).textPrimary,
                     ),
                   ),
                 ),
@@ -734,54 +756,62 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   }
 
   Widget _buildInstantDispatchCard() {
+    final palette = ZivoPalette.of(context);
     return SliverToBoxAdapter(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+        padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
         child: Material(
-          color: AppColors.cardDark,
-          borderRadius: BorderRadius.circular(16),
+          color: palette.card,
+          borderRadius: BorderRadius.circular(14),
           child: InkWell(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(14),
             onTap: _runInstantDispatch,
             child: Container(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.borderColor),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: palette.border),
               ),
               child: Row(
                 children: [
                   Container(
-                    width: 44,
-                    height: 44,
+                    width: 36,
+                    height: 36,
                     decoration: BoxDecoration(
-                      color: AppColors.accent.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(12),
+                      color: palette.accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(Icons.bolt_rounded,
-                        color: AppColors.accent),
+                    child: Icon(
+                      Icons.bolt_rounded,
+                      color: palette.accent,
+                      size: 18,
+                    ),
                   ),
-                  const Gap(12),
+                  const Gap(10),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           'Find help now',
-                          style: AppTextStyles.headingSmall.copyWith(fontSize: 14),
+                          style: AppTextStyles.bodySmall.copyWith(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: palette.textPrimary,
+                          ),
                         ),
                         Text(
                           'Review the price, then request a nearby helper',
                           style: AppTextStyles.bodySmall.copyWith(
-                            color: AppColors.textMuted,
+                            color: palette.textMuted,
                             fontSize: 11,
                           ),
                         ),
                       ],
                     ),
                   ),
-                  const Icon(Icons.chevron_right_rounded,
-                      color: AppColors.textMuted),
+                  Icon(Icons.chevron_right_rounded,
+                      size: 18, color: palette.textMuted),
                 ],
               ),
             ),
@@ -1063,7 +1093,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                     ' · you cannot undercut',
                                     style: AppTextStyles.bodySmall.copyWith(
                                       fontSize: 11,
-                                      color: AppColors.textMuted,
+                                      color: ZivoPalette.of(context).textMuted,
                                     ),
                                   ),
                                 ],
@@ -1073,7 +1103,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                     priceNote,
                                     style: AppTextStyles.bodySmall.copyWith(
                                       fontSize: 11,
-                                      color: AppColors.textMuted,
+                                      color: ZivoPalette.of(context).textMuted,
                                     ),
                                   ),
                                 ],
@@ -1083,7 +1113,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                     policy,
                                     style: AppTextStyles.bodySmall.copyWith(
                                       fontSize: 10,
-                                      color: AppColors.textMuted,
+                                      color: ZivoPalette.of(context).textMuted,
                                     ),
                                   ),
                                 ],
@@ -1219,7 +1249,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
         child: Material(
-          color: AppColors.cardDark,
+          color: ZivoPalette.of(context).card,
           borderRadius: BorderRadius.circular(16),
           child: InkWell(
             borderRadius: BorderRadius.circular(16),
@@ -1235,7 +1265,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: AppColors.accent.withValues(alpha: 0.3),
+                  color: ZivoPalette.of(context).border,
                 ),
               ),
               child: Column(
@@ -1273,7 +1303,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                   ? 'Unlocked for inside-home micro-tasks'
                                   : 'Stake LKR 200 · 3 local vouches unlock home entry',
                               style: AppTextStyles.bodySmall.copyWith(
-                                color: AppColors.textMuted,
+                                color: ZivoPalette.of(context).textMuted,
                                 fontSize: 11,
                               ),
                             ),
@@ -1291,7 +1321,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                           _helperMapExpanded
                               ? Icons.expand_less_rounded
                               : Icons.expand_more_rounded,
-                          color: AppColors.textMuted,
+                          color: ZivoPalette.of(context).textMuted,
                         ),
                     ],
                   ),
@@ -1347,7 +1377,13 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
               onPressed: () => setState(() => _helperMapExpanded = false)),
           ]),
           if (_nearbyPosition == null)
-            const Text('Use your location above to discover helpers in your area.')
+            TextButton.icon(
+              onPressed: _locating ? null : _useNearbyLocation,
+              icon: const Icon(Icons.my_location_rounded, size: 16),
+              label: Text(_locating
+                  ? 'Finding your location…'
+                  : 'Share location to see nearby helpers'),
+            )
           else if (_liveHelpers.isEmpty)
             const Text('No helpers are available nearby right now. You can still post a task.')
           else
@@ -1427,12 +1463,13 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     final secs = offer?['seconds_left'] ?? 0;
     final price = offer?['sample_labor_lkr'];
     final discount = offer?['discount_pct'] ?? 30;
+    final palette = ZivoPalette.of(context);
 
     return SliverToBoxAdapter(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
         child: Material(
-          color: AppColors.cardDark,
+          color: palette.card,
           borderRadius: BorderRadius.circular(16),
           child: InkWell(
             borderRadius: BorderRadius.circular(16),
@@ -1452,7 +1489,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                 border: Border.all(
                   color: hasOffer
                       ? AppColors.successColor.withValues(alpha: 0.4)
-                      : AppColors.borderColor,
+                      : palette.border,
                 ),
               ),
               child: Row(
@@ -1463,7 +1500,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                     decoration: BoxDecoration(
                       color: (hasOffer
                               ? AppColors.successColor
-                              : AppColors.textMuted)
+                              : ZivoPalette.of(context).textMuted)
                           .withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -1471,7 +1508,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                       Icons.route_rounded,
                       color: hasOffer
                           ? AppColors.successColor
-                          : AppColors.textMuted,
+                          : ZivoPalette.of(context).textMuted,
                     ),
                   ),
                   const Gap(12),
@@ -1483,8 +1520,10 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                           hasOffer
                               ? 'Street Batch open'
                               : 'Street Batch',
-                          style: AppTextStyles.headingSmall
-                              .copyWith(fontSize: 14),
+                          style: AppTextStyles.headingSmall.copyWith(
+                            fontSize: 14,
+                            color: palette.textPrimary,
+                          ),
                         ),
                         Text(
                           hasOffer
@@ -1492,7 +1531,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                                   '${price != null ? ' · from ${AppConfig.money(num.tryParse('$price') ?? 0)}' : ''} · ${secs}s left'
                               : 'No piggyback window on your block — Dispatch opens one',
                           style: AppTextStyles.bodySmall.copyWith(
-                            color: AppColors.textMuted,
+                            color: palette.textMuted,
                             fontSize: 11,
                           ),
                         ),
@@ -1504,7 +1543,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                     style: AppTextStyles.capsLabel.copyWith(
                       color: hasOffer
                           ? AppColors.successColor
-                          : AppColors.textMuted,
+                          : ZivoPalette.of(context).textMuted,
                     ),
                   ),
                 ],
@@ -1669,39 +1708,27 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     }
   }
 
-  Widget _buildLocationControl() => SliverToBoxAdapter(
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: OutlinedButton.icon(
-        onPressed: _locating ? null : _useNearbyLocation,
-        icon: const Icon(Icons.my_location_rounded, size: 18),
-        label: Text(_locating ? 'Finding your location…' :
-          _nearbyPosition == null ? 'Use my location for nearby help' : 'Nearby your current location · refresh'),
-      ),
-    ),
-  );
-
   /// Desktop: full category list. Phone: seven services + More.
   Widget _buildCategoryGrid({bool compact = false}) {
     if (!compact) {
-      final categories = TaskCategory.values;
-      return SliverPadding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        sliver: SliverGrid(
-          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: 140,
-            mainAxisExtent: 148,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-          ),
-          delegate: SliverChildBuilderDelegate(
-            (ctx, i) => _CategoryTile(
-              category: categories[i],
-              color: _catColor(categories[i]),
-              index: i,
+    final categories = TaskCategory.values;
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      sliver: SliverGrid(
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 140,
+            mainAxisExtent: 128,
+          crossAxisSpacing: 10,
+          mainAxisSpacing: 10,
+        ),
+        delegate: SliverChildBuilderDelegate(
+          (ctx, i) => _CategoryTile(
+            category: categories[i],
+            color: _catColor(categories[i]),
+            index: i,
               onTap: () => _openCategory(categories[i]),
-            ),
-            childCount: categories.length,
+          ),
+          childCount: categories.length,
           ),
         ),
       );
@@ -1714,7 +1741,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
       sliver: SliverGrid(
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: largeText || MediaQuery.sizeOf(context).width < 350 ? 2 : 4,
-          mainAxisExtent: largeText ? 148 : 118,
+          mainAxisExtent: largeText ? 128 : 108,
           crossAxisSpacing: 10,
           mainAxisSpacing: 10,
         ),
@@ -1791,12 +1818,20 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           );
         }
 
+        // Home / rail: compact name chips → Uber-style journey on tap.
+        // My tasks page keeps the full management cards.
+        final visible = history ? tasks : tasks.take(4).toList();
         return SliverPadding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           sliver: SliverList(
             delegate: SliverChildBuilderDelegate(
-              (ctx, i) => _ClientTaskCard(task: tasks[i], index: i),
-              childCount: history ? tasks.length : tasks.take(2).length,
+              (ctx, i) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: history
+                    ? _ClientTaskCard(task: visible[i], index: i)
+                    : TaskNameChip(task: visible[i]),
+              ),
+              childCount: visible.length,
             ),
           ),
         );
@@ -1823,28 +1858,29 @@ class _CategoryTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = ZivoPalette.of(context);
     return Material(
-      color: Colors.white,
+      color: palette.card,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18),
-        side: const BorderSide(color: AppColors.borderColor)),
+        side: BorderSide(color: palette.border)),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: onTap,
+      onTap: onTap,
         borderRadius: BorderRadius.circular(16),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CategoryIconBadge(category, size: 56),
-              const Gap(8),
-              Text(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+              CategoryIconBadge(category, size: 44),
+            const Gap(6),
+            Text(
                 category.displayName,
                 style: AppTextStyles.bodySmall.copyWith(
-                  color: AppColors.textPrimary,
+                  color: palette.textPrimary,
                   fontWeight: FontWeight.w600,
-                  height: 1.2,
-                  fontSize: 12,
+                  height: 1.15,
+                  fontSize: 11,
                 ),
                 textAlign: TextAlign.center,
                 maxLines: 2,
@@ -1866,10 +1902,11 @@ class _MoreCategoryTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = ZivoPalette.of(context);
     return Material(
-      color: Colors.white,
+      color: palette.card,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18),
-        side: const BorderSide(color: AppColors.borderColor)),
+        side: BorderSide(color: palette.border)),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
@@ -1884,15 +1921,15 @@ class _MoreCategoryTile extends StatelessWidget {
               Text(
                 'More',
                 style: AppTextStyles.bodySmall.copyWith(
-                  color: AppColors.textPrimary,
+                  color: palette.textPrimary,
                   fontWeight: FontWeight.w600,
                   height: 1.2,
                   fontSize: 12,
                 ),
                 textAlign: TextAlign.center,
-              ),
-            ],
-          ),
+            ),
+          ],
+        ),
         ),
       ),
     ).animate(delay: Duration(milliseconds: 15 * index))
@@ -1901,6 +1938,124 @@ class _MoreCategoryTile extends StatelessWidget {
 }
 
 // ── Client Task Card ──────────────────────────────────────────────────────────
+
+Future<void> _editClientTask(BuildContext context, Task task) async {
+  final titleCtrl = TextEditingController(text: task.title);
+  final descCtrl = TextEditingController(text: task.description);
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Edit task'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: titleCtrl,
+            decoration: const InputDecoration(labelText: 'Title'),
+          ),
+          const Gap(12),
+          TextField(
+            controller: descCtrl,
+            maxLines: 3,
+            decoration: const InputDecoration(labelText: 'Description'),
+            ),
+          ],
+        ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Save'),
+        ),
+      ],
+    ),
+  );
+  final title = titleCtrl.text.trim();
+  final desc = descCtrl.text.trim();
+  titleCtrl.dispose();
+  descCtrl.dispose();
+  if (ok != true || !context.mounted) return;
+  try {
+    await context.read<TaskRepository>().editTask(
+          taskId: task.id,
+          title: title,
+          description: desc,
+        );
+    if (!context.mounted) return;
+    final auth = context.read<AuthBloc>().state;
+    if (auth is AuthAuthenticated) {
+      context.read<TaskBloc>().add(TaskFetchClientTasks(auth.profile.id));
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Task updated'),
+        backgroundColor: AppColors.successColor,
+      ),
+    );
+  } catch (e) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(humanizeError(e)),
+        backgroundColor: AppColors.errorColor,
+      ),
+    );
+  }
+}
+
+Future<void> _deleteClientTask(BuildContext context, Task task) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Delete task?'),
+      content: Text(
+        task.status == TaskStatus.open
+            ? 'Remove this job. Escrow returns to your wallet — no OTP needed.'
+            : 'Cancel before Start OTP. Escrow returns to your wallet.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Keep'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: AppColors.errorColor),
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Delete'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true || !context.mounted) return;
+  try {
+    await context.read<TaskRepository>().cancelTask(
+          task.id,
+          reason: 'Deleted by client',
+        );
+    if (!context.mounted) return;
+    final auth = context.read<AuthBloc>().state;
+    if (auth is AuthAuthenticated) {
+      context.read<TaskBloc>().add(TaskFetchClientTasks(auth.profile.id));
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Task deleted — escrow refunded'),
+        backgroundColor: AppColors.successColor,
+      ),
+    );
+  } catch (e) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(humanizeError(e)),
+        backgroundColor: AppColors.errorColor,
+      ),
+    );
+  }
+}
 
 Future<void> _openClientDispute(BuildContext context, Task task) async {
   final reasonCtrl = TextEditingController();
@@ -1978,205 +2133,328 @@ class _ClientTaskCard extends StatelessWidget {
   final Task task;
   final int index;
 
-  Color _catColor(TaskCategory cat) {
-    switch (cat) {
-      case TaskCategory.queueStanding:     return AppColors.catQueue;
-      case TaskCategory.laundry:           return AppColors.catLaundry;
-      case TaskCategory.groceryRun:        return AppColors.catGrocery;
-      case TaskCategory.homeCleaning:      return AppColors.catCleaning;
-      case TaskCategory.homeCooking:       return AppColors.catCooking;
-      case TaskCategory.movingHelp:        return AppColors.catMoving;
-      case TaskCategory.tutoring:          return AppColors.catTutoring;
-      case TaskCategory.techHelp:          return AppColors.catTech;
-      case TaskCategory.petCare:           return AppColors.catPetCare;
-      case TaskCategory.tailoring:         return AppColors.catTailoring;
-      case TaskCategory.driver:            return AppColors.catDriver;
-      case TaskCategory.errandRun:         return AppColors.catErrand;
-      case TaskCategory.gardening:         return AppColors.catGarden;
-      case TaskCategory.documentWork:      return AppColors.catDocument;
-      case TaskCategory.hospitalCompanion: return AppColors.catHospital;
-      case TaskCategory.babysitting:       return AppColors.catBabysit;
-      case TaskCategory.elderCare:         return AppColors.catElderCare;
-      case TaskCategory.eventHelp:         return AppColors.catEvent;
-      case TaskCategory.photography:       return AppColors.catPhoto;
-      case TaskCategory.homeRepair:        return AppColors.catRepair;
-      case TaskCategory.other:             return AppColors.textMuted;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final color = _catColor(task.category);
-    return GestureDetector(
-      onTap: () => context.go('/task/${task.id}/track'),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
+    final live = task.status == TaskStatus.matched ||
+        task.status == TaskStatus.inProgress;
+    final canManage =
+        task.status == TaskStatus.open || task.status == TaskStatus.matched;
+    final helperName = live
+        ? _ClientHomeScreenState._cleanHelperName(task.helperDisplayName)
+        : '';
+
+    final palette = ZivoPalette.of(context);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
         decoration: BoxDecoration(
-          color: AppColors.cardDark,
+        color: palette.card,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.borderColor),
+        border: Border.all(color: palette.border.withValues(alpha: 0.85)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.035),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
         ),
         child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Category header strip
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.10),
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(16)),
-              ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 4, 0),
               child: Row(
                 children: [
-                  CategoryIcon(task.category, size: 16),
-                  const Gap(8),
-                  Expanded(child: Text(
+                CategoryIcon(task.category, size: 15),
+                const Gap(6),
+                Expanded(
+                  child: Text(
                     task.category.displayName.toUpperCase(),
-                    maxLines: 2,
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: AppTextStyles.capsLabel.copyWith(
-                        color: color, fontSize: 10, letterSpacing: 1.0),
+                      color: ZivoPalette.of(context).textMuted,
+                      fontSize: 9,
+                      letterSpacing: 0.7,
                   ),
                   ),
-                  const Gap(8),
+                ),
                   TaskStatusBadge(status: task.status),
-                ],
-              ),
+                PopupMenuButton<String>(
+                  tooltip: 'More',
+                  padding: EdgeInsets.zero,
+                  iconSize: 20,
+                  icon: Icon(
+                    Icons.more_horiz_rounded,
+                    color: ZivoPalette.of(context).textMuted,
+                    size: 20,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  onSelected: (value) {
+                    switch (value) {
+                      case 'edit':
+                        _editClientTask(context, task);
+                      case 'delete':
+                        _deleteClientTask(context, task);
+                      case 'dispute':
+                        _openClientDispute(context, task);
+                      case 'trust':
+                        showTrustReviewSheet(context, taskId: task.id);
+                    }
+                  },
+                  itemBuilder: (ctx) => [
+                    if (canManage)
+                      const PopupMenuItem(
+                        value: 'edit',
+                        child: Text('Edit'),
+                      ),
+                    if (canManage)
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Text(
+                          'Delete',
+                          style: TextStyle(color: AppColors.errorColor),
+                        ),
+                      ),
+                    if (live)
+                      const PopupMenuItem(
+                        value: 'dispute',
+                        child: Text('Dispute'),
+                      ),
+                    if (live)
+                      const PopupMenuItem(
+                        value: 'trust',
+                        child: Text('Trust review'),
+                      ),
+                  ],
+                ),
+              ],
             ),
-            // Task body
+          ),
             Padding(
-              padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(task.title,
-                      style: AppTextStyles.headingSmall,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis),
-                  const Gap(6),
-                  Text(task.description,
-                      style: AppTextStyles.bodyMedium,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis),
-                  if (task.status == TaskStatus.matched ||
-                      task.status == TaskStatus.inProgress) ...[
-                    const Gap(10),
-                    if (task.helperDisplayName != null)
-                      Text(
-                        'Helper: ${_ClientHomeScreenState._cleanHelperName(task.helperDisplayName)}',
-                        style: AppTextStyles.bodySmall.copyWith(
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.helperAccent,
-                        ),
-                      ),
-                    if (task.startOtp != null || task.endOtp != null) ...[
-                      const Gap(8),
-                      _ClientOtpBanner(task: task),
-                    ],
-                  ],
-                  if (task.status == TaskStatus.completed) ...[
-                    const Gap(12),
-                    Text(
-                      'Job finished — escrow released.',
-                      style: AppTextStyles.bodySmall.copyWith(
-                        color: AppColors.successColor,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                  const Gap(12),
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 8,
-                    children: [
-                      _Chip(icon: Icons.schedule_outlined,
-                        label: '${task.estimatedHours}h', color: color),
-                      _Chip(icon: Icons.payments_outlined,
-                        label: '${AppConfig.money(task.hourlyRate)}/hr',
-                        color: color),
-                      _Chip(icon: Icons.receipt_long_outlined,
-                        label: '${AppConfig.money(task.totalAmount)} total',
-                        color: color),
-                    ],
+                Text(
+                  task.title,
+                  style: AppTextStyles.headingSmall.copyWith(
+                    height: 1.15,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: palette.textPrimary,
                   ),
-                  const Gap(12),
-                  Row(
-                    children: [
-                      if (task.status == TaskStatus.matched ||
-                          task.status == TaskStatus.inProgress) ...[
-                        TextButton.icon(
-                          onPressed: () => context.push(
-                            AppRoutes.chatFor(task.id, title: task.title),
-                          ),
-                          icon: const Icon(Icons.chat_bubble_outline_rounded,
-                              size: 16),
-                          label: const Text('Chat'),
-                          style: TextButton.styleFrom(
-                            foregroundColor: AppColors.helperAccent,
-                            padding: EdgeInsets.zero,
-                            visualDensity: VisualDensity.compact,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const Gap(2),
+                Text(
+                  task.description,
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: palette.textSecondary,
+                    height: 1.25,
+                    fontSize: 11,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (helperName.isNotEmpty) ...[
+                  const Gap(8),
+                  _RoleMark(
+                    label: helperName,
+                    role: 'Helper',
+                    accent: AppColors.helperAccent,
+                    icon: Icons.handshake_rounded,
+                  ),
+                ],
+                if (live &&
+                      (task.startOtp != null || task.endOtp != null)) ...[
+                  const Gap(8),
+                  _ClientOtpBanner(task: task),
+                ],
+                if (task.status == TaskStatus.completed) ...[
+                  const Gap(8),
+                  Text(
+                    'Job finished — escrow released.',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: AppColors.successColor,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+                          const Gap(8),
+                Text(
+                  '${task.estimatedHours}h  ·  ${AppConfig.money(task.hourlyRate)}/hr  ·  ${AppConfig.money(task.totalAmount)}',
+                              style: AppTextStyles.bodySmall.copyWith(
+                    fontSize: 11,
+                    color: palette.textMuted,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: -0.1,
+                  ),
+                ),
+                const Gap(8),
+                Row(
+                  children: [
+                    if (live) ...[
+                      Expanded(
+                        child: ChatUnreadPoller(
+                          taskId: task.id,
+                          builder: (context, unread) => _ActionPill(
+                            icon: Icons.chat_bubble_outline_rounded,
+                            label: unread > 0 ? 'Chat $unread' : 'Chat',
+                            tone: AppColors.helperAccent,
+                            onTap: () => context.push(
+                              AppRoutes.chatFor(task.id, title: task.title),
+                            ),
                           ),
                         ),
-                        TextButton.icon(
-                          onPressed: () => showTrustReviewSheet(
+                      ),
+                      const Gap(6),
+                      Expanded(
+                        child: _ActionPill(
+                          icon: Icons.gavel_rounded,
+                          label: 'Trust',
+                          // Never AppColors.textPrimary — charcoal vanishes on #000.
+                          tone: palette.accent,
+                          onTap: () => showTrustReviewSheet(
                             context,
                             taskId: task.id,
                           ),
-                          icon: const Icon(Icons.gavel_rounded, size: 16),
-                          label: const Text('Trust'),
-                          style: TextButton.styleFrom(
-                            foregroundColor: Colors.black87,
-                            padding: EdgeInsets.zero,
-                            visualDensity: VisualDensity.compact,
-                          ),
-                        ),
-                        TextButton.icon(
-                          onPressed: () => _openClientDispute(context, task),
-                          icon: const Icon(Icons.report_outlined, size: 16),
-                          label: const Text('Dispute'),
-                          style: TextButton.styleFrom(
-                            foregroundColor: AppColors.warningColor,
-                            padding: EdgeInsets.zero,
-                            visualDensity: VisualDensity.compact,
-                          ),
-                        ),
-                      ],
-                      const Spacer(),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: task.status == TaskStatus.open
-                              ? AppColors.helperAccent
-                              : AppColors.accent,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          task.status == TaskStatus.open
-                              ? 'Review Applicants'
-                              : task.status == TaskStatus.disputed
-                                  ? 'Disputed'
-                                  : 'Track',
-                          style: AppTextStyles.capsLabel.copyWith(
-                            color: Colors.white,
-                            letterSpacing: 0.5,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
                         ),
                       ),
+                      const Gap(6),
                     ],
-                  ),
-                ],
-              ),
+                    Expanded(
+                      child: _ActionPill(
+                        icon: task.status == TaskStatus.open
+                            ? Icons.people_outline_rounded
+                            : Icons.route_outlined,
+                        label: task.status == TaskStatus.open
+                            ? 'Applicants'
+                            : task.status == TaskStatus.disputed
+                                ? 'Disputed'
+                                : 'Track',
+                        tone: palette.onAccent,
+                        fill: task.status == TaskStatus.open
+                            ? AppColors.helperAccent
+                            : palette.accent,
+                        onTap: () => context.go('/task/${task.id}/track'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     )
-        .animate(delay: Duration(milliseconds: 60 * index))
-        .fadeIn(duration: 350.ms)
-        .slideY(begin: 0.07);
+        .animate(delay: Duration(milliseconds: 50 * index))
+        .fadeIn(duration: 280.ms)
+        .slideY(begin: 0.04);
+  }
+}
+
+/// Tiny Client / Helper identity chip.
+class _RoleMark extends StatelessWidget {
+  const _RoleMark({
+    required this.label,
+    required this.role,
+    required this.accent,
+    required this.icon,
+  });
+
+  final String label;
+  final String role;
+  final Color accent;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+                    Container(
+          width: 22,
+          height: 22,
+                      decoration: BoxDecoration(
+            color: accent,
+            borderRadius: BorderRadius.circular(7),
+          ),
+          child: Icon(icon, size: 12, color: Colors.white),
+        ),
+        const Gap(6),
+                          Text(
+          '$role · $label',
+                            style: AppTextStyles.bodySmall.copyWith(
+            fontWeight: FontWeight.w700,
+            color: accent,
+            fontSize: 11,
+                            ),
+                          ),
+                        ],
+    );
+  }
+}
+
+class _ActionPill extends StatelessWidget {
+  const _ActionPill({
+    required this.icon,
+    required this.label,
+    required this.tone,
+    required this.onTap,
+    this.fill,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color tone;
+  final Color? fill;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final filled = fill != null;
+    final fg = filled ? (tone) : tone;
+    return Material(
+      color: fill ?? tone.withValues(alpha: 0.12),
+      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+        side: filled
+            ? BorderSide.none
+            : BorderSide(color: tone.withValues(alpha: 0.55), width: 1),
+                      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+                      child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+              Icon(icon, size: 13, color: fg),
+              const Gap(4),
+              Flexible(
+                            child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                              style: AppTextStyles.bodySmall.copyWith(
+                    fontSize: 10.5,
+                                fontWeight: FontWeight.w700,
+                    color: fg,
+                    height: 1.1,
+                              ),
+                            ),
+                          ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -2249,107 +2527,171 @@ class _ClientOtpBannerState extends State<_ClientOtpBanner> {
   @override
   Widget build(BuildContext context) {
     final inProgress = task.status == TaskStatus.inProgress;
+    final proofReady = task.hasCompletionProof;
     final code = inProgress ? task.endOtp : task.startOtp;
-    final title = inProgress
-        ? 'End OTP: ${code ?? '----'}'
-        : 'Start OTP: ${code ?? '----'}';
-    final hint = inProgress
-        ? 'When the work looks good, send the End OTP in chat — helper finishes and escrow releases.'
-        : 'Helper accepted. Send the Start OTP in chat so they can begin — no need to read it aloud.';
+    final phase = inProgress ? 'End OTP' : 'Start OTP';
+    final blocked = inProgress &&
+        task.needsCompletionProof &&
+        !proofReady;
+    final hint = !inProgress
+        ? 'Send in chat — helper enters it to start'
+        : proofReady
+            ? 'Proof in — send End OTP in chat'
+            : 'Waiting for helper proof';
     final accent =
         inProgress ? AppColors.successColor : AppColors.helperAccent;
+    final canSend = !_sending && code != null && !blocked;
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
       decoration: BoxDecoration(
-        color: accent.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: accent.withValues(alpha: 0.35)),
+        color: accent.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: accent.withValues(alpha: 0.22)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(Icons.lock_outline_rounded, size: 16, color: accent),
+                  Row(
+                    children: [
+              Icon(Icons.lock_rounded, size: 14, color: accent),
+              const Gap(6),
+              Text(
+                phase,
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: accent,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 11,
+                ),
+              ),
               const Gap(8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: AppTextStyles.bodySmall.copyWith(
+                      Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(7),
+                  border: Border.all(color: accent.withValues(alpha: 0.25)),
+                        ),
+                        child: Text(
+                  code ?? '····',
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                    letterSpacing: 2.2,
                     color: accent,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.4,
+                    height: 1.1,
                   ),
                 ),
               ),
+              const Gap(6),
               Text(
-                inProgress ? 'Step 2/2' : 'Step 1/2',
+                inProgress ? '2/2' : '1/2',
                 style: AppTextStyles.bodySmall.copyWith(
-                  color: AppColors.textMuted,
-                  fontSize: 10,
+                  color: ZivoPalette.of(context).textMuted,
+                              fontSize: 10,
                 ),
               ),
-              A11yReadButton(
-                text: '$title. $hint',
+              A11yReadButton(text: '$phase ${code ?? ''}. $hint'),
+              const Spacer(),
+              Material(
+                color: canSend ? accent : accent.withValues(alpha: 0.35),
+                borderRadius: BorderRadius.circular(9),
+                child: InkWell(
+                  onTap: canSend ? _sendOtpInChat : null,
+                  borderRadius: BorderRadius.circular(9),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_sending)
+                          const SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 1.8,
+                              color: Colors.white,
+                            ),
+                          )
+                        else
+                          Icon(
+                            _sent ? Icons.check_rounded : Icons.send_rounded,
+                            size: 13,
+                            color: Colors.white,
+                          ),
+                        const Gap(4),
+                        Text(
+                          _sent
+                              ? 'Sent'
+                              : blocked
+                                  ? 'Locked'
+                                  : 'Send',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
               ),
-            ],
-          ),
-          const Gap(6),
+            ),
+          ],
+        ),
+          const Gap(5),
           Text(
             hint,
             style: AppTextStyles.bodySmall.copyWith(
-              color: AppColors.textMuted,
-              fontSize: 11,
+              color: ZivoPalette.of(context).textMuted,
+              fontSize: 10.5,
+              height: 1.25,
             ),
           ),
-          const Gap(10),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _sending || code == null ? null : _sendOtpInChat,
-              icon: _sending
-                  ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Icon(
-                      _sent ? Icons.check_rounded : Icons.send_rounded,
-                      size: 16,
-                    ),
-              label: Text(
-                _sent
-                    ? (inProgress ? 'End OTP sent — send again' : 'Start OTP sent — send again')
-                    : (inProgress
-                        ? 'Send End OTP in chat'
-                        : 'Send Start OTP in chat'),
+          if (inProgress && proofReady) ...[
+            const Gap(6),
+            Text(
+              'Proof · ${task.proofCheckedItems.length} item(s)'
+              '${task.proofPhotoUrls.isNotEmpty ? ' · ${task.proofPhotoUrls.length} photo(s)' : ''}',
+              style: AppTextStyles.bodySmall.copyWith(
+                fontWeight: FontWeight.w600,
+                fontSize: 10,
+                color: AppColors.successColor,
               ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: accent,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+            ),
+            if (task.proofPhotoUrls.isNotEmpty) ...[
+              const Gap(6),
+              SizedBox(
+                height: 36,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: task.proofPhotoUrls.length.clamp(0, 3),
+                  separatorBuilder: (_, __) => const Gap(5),
+                  itemBuilder: (_, i) => ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: Image.network(
+                      task.proofPhotoUrls[i],
+                      width: 36,
+                      height: 36,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        width: 36,
+                        height: 36,
+                        color: AppColors.borderColor,
+                        child: const Icon(Icons.image_outlined, size: 14),
+                      ),
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ),
-          const Gap(6),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: () => context.push(
-                AppRoutes.chatFor(task.id, title: task.title),
-              ),
-              child: const Text('Open chat'),
-            ),
-          ),
+            ],
+          ],
         ],
       ),
     );
@@ -2372,7 +2714,7 @@ class _Chip extends StatelessWidget {
         const Gap(4),
         Flexible(child: Text(label,
             style: AppTextStyles.bodySmall.copyWith(
-                color: AppColors.textSecondary, fontSize: 11))),
+                color: ZivoPalette.of(context).textSecondary, fontSize: 11))),
       ],
     );
   }
@@ -2381,27 +2723,28 @@ class _Chip extends StatelessWidget {
 class _EmptyTasksCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
+    final palette = ZivoPalette.of(context);
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: AppColors.cardDark,
+        color: palette.card,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-            color: AppColors.accent.withOpacity(0.2),
-            style: BorderStyle.solid),
+        border: Border.all(color: palette.border),
       ),
       child: Column(
         children: [
           Text('🙌', style: const TextStyle(fontSize: 36)),
           const Gap(12),
-          Text('No active tasks yet',
-              style: AppTextStyles.headingSmall,
-              textAlign: TextAlign.center),
+          Text(
+            'No active tasks yet',
+            style: AppTextStyles.headingSmall.copyWith(color: palette.textPrimary),
+            textAlign: TextAlign.center,
+          ),
           const Gap(6),
           Text(
             'Post your first task above and get matched with a real person near you in minutes.',
-            style: AppTextStyles.bodyMedium,
+            style: AppTextStyles.bodyMedium.copyWith(color: palette.textSecondary),
             textAlign: TextAlign.center,
           ),
         ],

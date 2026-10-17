@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" font-family="Inter,Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#5f6368"/></marker>
+    <style>
+      .t{font-size:13px;fill:#202124}.s{font-size:11px;fill:#5f6368}.h{font-size:15px;font-weight:700;fill:#202124}
+      .box{fill:#fff;stroke:#dadce0;stroke-width:1.5;rx:12}
+      .b{stroke:#4285F4;fill:#e8f0fe}.r{stroke:#EA4335;fill:#fce8e6}.y{stroke:#F9AB00;fill:#fef7e0}.g{stroke:#34A853;fill:#e6f4ea}.n{stroke:#9aa0a6;fill:#f1f3f4;stroke-dasharray:5 4}
+      .l{stroke:#5f6368;stroke-width:1.6;fill:none;marker-end:url(#a)}
+      .ld{stroke:#9aa0a6;stroke-width:1.4;fill:none;marker-end:url(#a);stroke-dasharray:5 4}
+    </style>
+  </defs>
+  <rect width="1280" height="760" fill="#fff"/>
+  <text x="30" y="38" font-size="22" font-weight="700" fill="#202124">Zivo &#8212; Google Cloud architecture</text>
+  <text x="30" y="60" class="s">Solid = built and running in project gcp-ai-builder &#183; Dashed = not built by us: Looker report (manual step in the browser), BigQuery ML (optional), external API</text>
+
+  <!-- Clients -->
+  <rect class="box" x="30" y="110" width="210" height="150"/>
+  <text x="48" y="138" class="h">Neighbours &amp; helpers</text>
+  <text x="48" y="160" class="t">Flutter web app (mobile-first)</text>
+  <text x="48" y="180" class="s">Tamil &#183; Sinhala &#183; English + 5 more UI langs</text>
+  <text x="48" y="200" class="s">mic &#183; camera &#183; geolocation &#183; TTS read-aloud</text>
+  <text x="48" y="220" class="s">large-text / simplify / describe-image</text>
+
+  <!-- Cloud Run -->
+  <rect class="box b" x="300" y="95" width="250" height="90"/>
+  <text x="318" y="122" class="h">Cloud Run &#183; zivo-web</text>
+  <text x="318" y="144" class="s">static Flutter build, asia-south1</text>
+  <rect class="box b" x="300" y="215" width="250" height="150"/>
+  <text x="318" y="242" class="h">Cloud Run &#183; zivo-api</text>
+  <text x="318" y="264" class="s">Express/TypeScript, scale-to-zero</text>
+  <text x="318" y="288" class="t">Gemini &#8220;pillars&#8221;: safety &#183; match &#183;</text>
+  <text x="318" y="306" class="t">receipt &#183; trust arbitrator &#183; task plan &#183;</text>
+  <text x="318" y="324" class="t">voice draft &#183; concierge agent &#183;</text>
+  <text x="318" y="342" class="t">cross-language chat &#183; resilience triage</text>
+
+  <!-- Vertex -->
+  <rect class="box r" x="640" y="95" width="250" height="125"/>
+  <text x="658" y="122" class="h">Vertex AI &#183; Gemini 2.5</text>
+  <text x="658" y="144" class="t">flash-lite: chat, translate, plan</text>
+  <text x="658" y="162" class="t">flash: safety, voice audio, photo,</text>
+  <text x="658" y="180" class="t">receipt vision (multimodal)</text>
+  <text x="658" y="202" class="s">tool-calling agent &#183; JSON mode &#183; retry + model fallback</text>
+
+  <!-- Speech -->
+  <rect class="box r" x="640" y="245" width="250" height="100"/>
+  <text x="658" y="272" class="h">Cloud Speech-to-Text &#183; Chirp</text>
+  <text x="658" y="290" class="s">ta-IN &#183; si-LK &#183; en-IN (asia-southeast1)</text>
+  <text x="658" y="316" class="h">Cloud Text-to-Speech</text>
+  <text x="658" y="334" class="s">ta-IN &#183; en-IN (Sinhala bridged via Gemini)</text>
+
+  <!-- Firestore / GCS -->
+  <rect class="box y" x="640" y="375" width="250" height="75"/>
+  <text x="658" y="402" class="h">Firestore</text>
+  <text x="658" y="422" class="s">users &#183; tasks &#183; wallet/escrow &#183; chat &#183;</text>
+  <text x="658" y="438" class="s">impact_events (mirror)</text>
+  <rect class="box y" x="640" y="465" width="250" height="60"/>
+  <text x="658" y="492" class="h">Cloud Storage</text>
+  <text x="658" y="511" class="s">task photos &amp; completion proof</text>
+
+  <!-- External -->
+  <rect class="box n" x="300" y="410" width="215" height="75"/>
+  <text x="318" y="438" class="h">Open-Meteo (external)</text>
+  <text x="318" y="458" class="s">hourly rain &#8594; monsoon hazard level</text>
+  <text x="318" y="474" class="s">(Earth Engine = future work)</text>
+
+  <!-- Pub/Sub path -->
+  <rect class="box g" x="640" y="575" width="190" height="75"/>
+  <text x="658" y="602" class="h">Pub/Sub</text>
+  <text x="658" y="622" class="s">topic zivo-events</text>
+  <text x="658" y="638" class="s">sub zivo-events-bq</text>
+  <rect class="box g" x="880" y="575" width="190" height="75"/>
+  <text x="898" y="602" class="h">BigQuery</text>
+  <text x="898" y="622" class="s">events_raw (JSON) &#8594; events view</text>
+  <text x="898" y="638" class="s">views: map_points &#183; impact_daily</text>
+  <rect class="box n" x="1110" y="575" width="150" height="75"/>
+  <text x="1128" y="602" class="h">Looker Studio</text>
+  <text x="1128" y="622" class="s">community-needs map</text>
+  <text x="1128" y="638" class="s">+ impact trend</text>
+
+  <!-- BQML -->
+  <rect class="box n" x="880" y="680" width="190" height="55"/>
+  <text x="898" y="705" class="h">BigQuery ML</text>
+  <text x="898" y="723" class="s">ARIMA_PLUS demand forecast (opt.)</text>
+
+  <!-- arrows -->
+  <path class="l" d="M240 160 H300"/>
+  <path class="l" d="M240 230 H300"/>
+  <path class="l" d="M550 250 H640"/>
+  <path class="l" d="M550 290 C600 290 600 160 640 160"/>
+  <path class="l" d="M550 300 H640"/>
+  <path class="l" d="M550 330 C600 330 600 410 640 410"/>
+  <path class="l" d="M550 345 C600 345 600 495 640 495"/>
+  <path class="l" d="M400 365 V410"/>
+  <path class="l" d="M535 365 C535 590 560 612 640 612"/>
+  <path class="l" d="M830 612 H880"/>
+  <path class="ld" d="M1070 612 H1110"/>
+  <path class="ld" d="M975 650 V680"/>
+  <text x="408" y="392" class="s">weather lookup</text>
+  <text x="548" y="560" class="s">impact events</text>
+  <text x="30" y="740" class="s">Events published: batch_join &#183; xlang_chat &#183; safety_block &#183; wage_floor_protect &#183; resilience_alert &#183; concierge_turn (simulated runs are tagged payload.simulated=true)</text>
+</svg>

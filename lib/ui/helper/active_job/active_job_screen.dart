@@ -1,11 +1,13 @@
 import 'package:hyperlocal/ui/_shared/category_icon.dart';
 import 'package:flutter/material.dart';
+import 'package:hyperlocal/ui/accessibility/ability_job_widgets.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
+import 'package:hyperlocal/core/constants/zivo_palette.dart';
 import 'package:hyperlocal/core/constants/app_config.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/utils/humanize_error.dart';
@@ -17,10 +19,12 @@ import 'package:hyperlocal/ui/_shared/empty_state_widget.dart';
 import 'package:hyperlocal/ui/_shared/task_photo_gallery.dart';
 import 'package:hyperlocal/blocs/otp/otp_bloc.dart';
 import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
+import 'package:hyperlocal/blocs/mode/mode_cubit.dart';
 import 'package:hyperlocal/blocs/task/task_bloc.dart';
 import 'package:hyperlocal/blocs/wallet/wallet_bloc.dart';
 import 'package:hyperlocal/core/router/app_router.dart';
 import 'package:hyperlocal/ui/_shared/trust_review_sheet.dart';
+import 'package:hyperlocal/ui/_shared/chat_unread_badge.dart';
 
 class ActiveJobScreen extends StatefulWidget {
   const ActiveJobScreen({super.key, required this.taskId});
@@ -64,6 +68,21 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
     _focusNodes.first.requestFocus();
   }
 
+  /// Always return to helper Jobs — never dump onto client home.
+  Future<void> _goBackToHelperHome() async {
+    try {
+      await context.read<ModeCubit>().ensureHelperWorkspace();
+    } catch (_) {
+      /* KYC block — still leave Active Job */
+    }
+    if (!mounted) return;
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go(AppRoutes.shell);
+    }
+  }
+
   void _submitOtp(OtpState state) {
     if (_enteredOtp.length != _otpLength) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -88,25 +107,52 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.backgroundDark,
-      appBar: AppBar(
-        title: const Text('Your active job'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded),
-          onPressed: () => context.go('/'),
-        ),
-        actions: [
-          IconButton(
-            tooltip: 'Chat with client',
-            icon: const Icon(Icons.chat_bubble_outline_rounded),
-            onPressed: () {
-              context.push(AppRoutes.chatFor(widget.taskId));
-            },
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _goBackToHelperHome();
+      },
+      child: Builder(
+        builder: (context) {
+          final palette = ZivoPalette.of(context);
+          return Scaffold(
+        backgroundColor: palette.canvas,
+        appBar: AppBar(
+          backgroundColor: palette.canvas,
+          foregroundColor: palette.textPrimary,
+          elevation: 0,
+          title: Text(
+            'Your active job',
+            style: AppTextStyles.headingSmall.copyWith(
+              fontWeight: FontWeight.w800,
+              color: palette.textPrimary,
+            ),
           ),
-        ],
-      ),
-      body: BlocConsumer<OtpBloc, OtpState>(
+          leading: IconButton(
+            icon: Icon(
+              Icons.arrow_back_ios_new_rounded,
+              color: palette.textPrimary,
+            ),
+            onPressed: _goBackToHelperHome,
+          ),
+          actions: [
+            ChatUnreadPoller(
+              taskId: widget.taskId,
+              builder: (context, unread) => IconButton(
+                tooltip: 'Chat with client',
+                icon: ChatUnreadBadge(
+                  count: unread,
+                  child: const Icon(Icons.chat_bubble_outline_rounded),
+                ),
+                onPressed: () {
+                  context.push(AppRoutes.chatFor(widget.taskId));
+                },
+              ),
+            ),
+          ],
+        ),
+        body: BlocConsumer<OtpBloc, OtpState>(
         listener: (context, state) {
           if (state is OtpStateCompleted) {
             final auth = context.read<AuthBloc>().state;
@@ -114,16 +160,12 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
                 ? auth.profile.id
                 : (state.task.helperId ?? '');
             if (helperId.isEmpty) return;
-            context.read<WalletBloc>().add(WalletCreditHelperEarnings(
-                  userId: helperId,
-                  taskId: state.task.id,
-                  amount: state.task.totalAmount,
-                  taskTitle: state.task.title,
-                ));
+            // Refresh from server — never invent local helper earnings.
+            context.read<WalletBloc>().add(WalletFetchRequested(helperId));
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
-                  '🎉 Job complete! +${AppConfig.money(state.task.totalAmount)} added to helper wallet.',
+                  'Job complete! +${AppConfig.money(state.task.totalAmount)} added to helper wallet.',
                 ),
                 backgroundColor: AppColors.successColor,
               ),
@@ -146,7 +188,10 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
           }
 
           if (state is OtpStateCompleted) {
-            return _CompletedView(task: state.task);
+            return _CompletedView(
+              task: state.task,
+              onBack: _goBackToHelperHome,
+            );
           }
 
           Task? task;
@@ -161,14 +206,28 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
           }
 
           if (task == null || state is OtpFailure) {
-            return const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20),
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Center(
-                child: EmptyStateWidget(
-                  icon: Icons.work_outline_rounded,
-                  title: 'No Active Job',
-                  subtitle: 'Browse the Job Feed to accept a task and start earning!',
-                  color: AppColors.helperAccent,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const EmptyStateWidget(
+                      icon: Icons.work_outline_rounded,
+                      title: 'No Active Job',
+                      subtitle:
+                          'Browse Jobs to accept a task and start earning!',
+                      color: AppColors.helperAccent,
+                    ),
+                    const Gap(16),
+                    FilledButton(
+                      onPressed: _goBackToHelperHome,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppColors.helperAccent,
+                      ),
+                      child: const Text('Back to Jobs'),
+                    ),
+                  ],
                 ),
               ),
             );
@@ -179,68 +238,33 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
           final activeTask = task;
 
           return SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 40),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _buildStatusBar(activeTask, isInProgress),
-                const Gap(20),
-                _buildTaskDetail(activeTask),
-                const Gap(12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () => context.push(
-                      AppRoutes.chatFor(
-                        widget.taskId,
-                        title: activeTask.title,
-                      ),
-                    ),
-                    icon: const Icon(Icons.chat_bubble_outline_rounded),
-                    label: const Text('Chat with client'),
-                  ),
-                ),
-                const Gap(8),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () => showTrustReviewSheet(
-                      context,
-                      taskId: widget.taskId,
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.helperAccent,
-                      foregroundColor: Colors.white,
-                    ),
-                    icon: const Icon(Icons.gavel_rounded, size: 18),
-                    label: const Text('Trust Arbitrator'),
-                  ),
-                ),
+                _buildHeroCard(activeTask, isInProgress),
+                const Gap(14),
+                AbilityJobCard(taskId: widget.taskId),
+                AccessAuditCard(task: activeTask),
+                _buildActionsCard(activeTask),
                 if (isInProgress &&
                     activeTask.needsCompletionProof &&
                     !activeTask.hasCompletionProof) ...[
-                  const Gap(16),
+                  const Gap(14),
                   _buildProofGate(activeTask),
                 ],
                 if (isInProgress && activeTask.hasCompletionProof) ...[
-                  const Gap(12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AppColors.helperAccent.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      activeTask.requiresPurchaseProof
-                          ? 'Proof submitted (${AppConfig.money(activeTask.goodsSpent)}). '
-                              'Wait for client to check, then enter End OTP.'
-                          : 'Completion proof submitted. Ask the client for End OTP.',
-                      style: AppTextStyles.bodySmall,
-                    ),
+                  const Gap(14),
+                  _SoftBanner(
+                    icon: Icons.verified_rounded,
+                    color: AppColors.helperAccent,
+                    text: activeTask.requiresPurchaseProof
+                        ? 'Proof submitted (${AppConfig.money(activeTask.goodsSpent)}). '
+                            'Wait for client to check, then enter End OTP.'
+                        : 'Completion proof submitted. Ask the client for End OTP.',
                   ),
                 ],
-                const Gap(24),
+                const Gap(14),
                 _buildOtpInput(
                   state: state,
                   task: activeTask,
@@ -253,34 +277,221 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
           );
         },
       ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildHeroCard(Task task, bool isInProgress) {
+    final palette = ZivoPalette.of(context);
+    final accent = isInProgress ? palette.accent : AppColors.uberBlue;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      decoration: BoxDecoration(
+        color: palette.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: accent.withValues(alpha: 0.25)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.035),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+              )
+                  .animate(onPlay: (c) => c.repeat(reverse: true))
+                  .scale(
+                    begin: const Offset(0.85, 0.85),
+                    end: const Offset(1.3, 1.3),
+                    duration: 900.ms,
+                  ),
+              const Gap(8),
+              Expanded(
+                child: Text(
+                  isInProgress ? 'Underway' : 'Waiting for Start OTP',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: accent,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              TaskStatusBadge(status: task.status),
+            ],
+          ),
+          const Gap(10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                alignment: Alignment.center,
+                child: CategoryIcon(task.category, size: 18),
+              ),
+              const Gap(10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      task.title,
+                      style: AppTextStyles.headingSmall.copyWith(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                        height: 1.2,
+                        color: palette.textPrimary,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const Gap(3),
+                    Text(
+                      task.description,
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: palette.textSecondary,
+                        height: 1.3,
+                        fontSize: 12,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (task.photoUrls.isNotEmpty) ...[
+            const Gap(8),
+            TaskPhotoGallery(photoUrls: task.photoUrls, height: 72),
+          ],
+          const Gap(8),
+          Text(
+            [
+              '${task.estimatedHours}h',
+              '${AppConfig.money(task.totalAmount * 0.9)} earn',
+              if (task.locationLabel != null) task.locationLabel!,
+            ].join('  ·  '),
+            style: AppTextStyles.bodySmall.copyWith(
+              fontSize: 11,
+              color: palette.textMuted,
+              fontWeight: FontWeight.w500,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    ).animate().fadeIn(duration: 240.ms).slideY(begin: 0.03, end: 0);
+  }
+
+  Widget _buildActionsCard(Task task) {
+    return Row(
+      children: [
+        Expanded(
+          child: ChatUnreadPoller(
+            taskId: widget.taskId,
+            builder: (context, unread) => _CompactAction(
+              icon: Icons.chat_bubble_outline_rounded,
+              label: unread > 0 ? 'Chat $unread' : 'Chat',
+              tone: const Color(0xFF1D4ED8),
+              onTap: () => context.push(
+                AppRoutes.chatFor(widget.taskId, title: task.title),
+              ),
+            ),
+          ),
+        ),
+        const Gap(8),
+        Expanded(
+          child: _CompactAction(
+            icon: Icons.gavel_rounded,
+            label: 'Trust',
+            tone: AppColors.helperAccent,
+            onTap: () => showTrustReviewSheet(context, taskId: widget.taskId),
+          ),
+        ),
+      ],
     );
   }
 
   Widget _buildProofGate(Task task) {
     final grocery = task.requiresPurchaseProof;
+    final palette = ZivoPalette.of(context);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.cardDark,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.warningColor.withValues(alpha: 0.5)),
+        color: palette.card,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: AppColors.warningColor.withValues(alpha: 0.35),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.warningColor.withValues(alpha: 0.08),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            grocery ? 'Purchase proof required' : 'Completion proof required',
-            style: AppTextStyles.headingSmall,
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.warningColor.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.photo_camera_rounded,
+                  color: AppColors.warningColor,
+                  size: 20,
+                ),
+              ),
+              const Gap(12),
+              Expanded(
+                child: Text(
+                  grocery
+                      ? 'Purchase proof required'
+                      : 'Completion proof required',
+                  style: AppTextStyles.headingSmall.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: palette.textPrimary,
+                  ),
+                ),
+              ),
+            ],
           ),
-          const Gap(6),
+          const Gap(10),
           Text(
             grocery
                 ? 'Photograph the till receipt + bag. Never take cash from the client. '
                     'Budget ${AppConfig.money(task.goodsBudget)}.'
                 : 'Check off the job list and add before/after photos. '
                     'End OTP stays locked until proof is submitted.',
-            style: AppTextStyles.bodySmall,
+            style: AppTextStyles.bodySmall.copyWith(
+              color: palette.textSecondary,
+              height: 1.35,
+            ),
           ),
           if (task.completionChecklist.isNotEmpty) ...[
             const Gap(10),
@@ -299,19 +510,25 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
               ),
             ),
           ],
-          const Gap(12),
+          const Gap(14),
           SizedBox(
             width: double.infinity,
-            child: ElevatedButton(
+            child: FilledButton(
               onPressed: () => grocery
                   ? _showProofDialog(task)
                   : _showCompletionProofDialog(task),
-              style: ElevatedButton.styleFrom(
+              style: FilledButton.styleFrom(
                 backgroundColor: Colors.black,
                 foregroundColor: Colors.white,
+                minimumSize: const Size.fromHeight(48),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
               ),
               child: Text(
-                grocery ? 'Run receipt reconciliation' : 'Submit completion proof',
+                grocery
+                    ? 'Run receipt reconciliation'
+                    : 'Submit completion proof',
               ),
             ),
           ),
@@ -703,87 +920,6 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
     );
   }
 
-  Widget _buildStatusBar(Task task, bool isInProgress) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: isInProgress
-              ? [AppColors.helperAccent.withOpacity(0.15), Colors.transparent]
-              : [AppColors.accent.withOpacity(0.15), Colors.transparent],
-        ),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: isInProgress
-              ? AppColors.helperAccent.withOpacity(0.3)
-              : AppColors.accent.withOpacity(0.3),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              color: isInProgress ? AppColors.helperAccent : AppColors.statusMatched,
-              shape: BoxShape.circle,
-            ),
-          ).animate(onPlay: (c) => c.repeat())
-              .scaleXY(end: 1.5, duration: 700.ms, curve: Curves.easeInOut),
-          const Gap(10),
-          Flexible(child: Text(
-            isInProgress ? 'Task is underway' : 'Waiting for Start OTP',
-            style: AppTextStyles.labelLarge.copyWith(
-              color: isInProgress ? AppColors.helperAccent : AppColors.statusMatched,
-            ),
-          )),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTaskDetail(Task task) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.cardDark,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.borderColor),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              CategoryIcon(task.category, size: 22),
-              const Gap(10),
-              Expanded(child: Text(task.title, style: AppTextStyles.headingSmall)),
-              TaskStatusBadge(status: task.status),
-            ],
-          ),
-          const Gap(10),
-          Text(task.description, style: AppTextStyles.bodyMedium, maxLines: 3, overflow: TextOverflow.ellipsis),
-          if (task.photoUrls.isNotEmpty) ...[
-            const Gap(12),
-            TaskPhotoGallery(photoUrls: task.photoUrls, height: 110),
-          ],
-          const Divider(height: 20),
-          Wrap(
-            spacing: 10, runSpacing: 8,
-            children: [
-              _DetailChip(Icons.schedule_rounded, '${task.estimatedHours}h'),
-              const Gap(10),
-              _DetailChip(Icons.payments_outlined, '${AppConfig.money(task.totalAmount * 0.9)} earnings'),
-              const Gap(10),
-              if (task.locationLabel != null)
-                _DetailChip(Icons.location_on_outlined, task.locationLabel!),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildOtpInput({
     required OtpState state,
     required Task task,
@@ -791,7 +927,8 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
     required bool isInProgress,
     String? errorMessage,
   }) {
-    final accentColor = isInProgress ? AppColors.helperAccent : AppColors.accent;
+    final palette = ZivoPalette.of(context);
+    final accentColor = isInProgress ? palette.accent : AppColors.uberBlue;
     final phaseLabel = isInProgress ? 'End OTP' : 'Start OTP';
     final instruction = isInProgress
         ? (task.needsCompletionProof && !task.hasCompletionProof
@@ -804,95 +941,203 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
         : 'Enter the Start OTP shown on the client’s phone to begin.';
 
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       decoration: BoxDecoration(
-        color: AppColors.cardDark,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: accentColor.withOpacity(0.3), width: 1.5),
+        color: palette.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: accentColor.withValues(alpha: 0.2)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: accentColor.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(8),
+              Icon(Icons.lock_rounded, size: 14, color: accentColor),
+              const Gap(6),
+              Text(
+                phaseLabel,
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: accentColor,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
                 ),
-                child: Text(
-                  phaseLabel,
-                  style: AppTextStyles.capsLabel.copyWith(color: accentColor),
+              ),
+              const Spacer(),
+              Text(
+                isInProgress ? '2/2' : '1/2',
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: palette.textMuted,
+                  fontSize: 10,
                 ),
               ),
             ],
           ),
-          const Gap(12),
-          Text(instruction, style: AppTextStyles.bodyMedium),
-          const Gap(24),
-
-          // OTP digit boxes (4 — same as client Start/End OTP)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: List.generate(_otpLength, (i) => _OtpBox(
-              controller: _otpControllers[i],
-              focusNode: _focusNodes[i],
-              nextFocus: i < _otpLength - 1 ? _focusNodes[i + 1] : null,
-              prevFocus: i > 0 ? _focusNodes[i - 1] : null,
-              accentColor: accentColor,
-            )),
+          const Gap(6),
+          Text(
+            instruction,
+            style: AppTextStyles.bodySmall.copyWith(
+              height: 1.3,
+              fontSize: 12,
+              color: palette.textSecondary,
+            ),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
           ),
-
-          if (errorMessage != null) ...[
-            const Gap(12),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppColors.errorColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.warning_rounded, color: AppColors.errorColor, size: 16),
-                  const Gap(8),
-                  Expanded(
-                    child: Text(
-                      errorMessage,
-                      style: AppTextStyles.bodySmall.copyWith(color: AppColors.errorColor),
-                    ),
-                  ),
-                ],
+          const Gap(12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(
+              _otpLength,
+              (i) => Padding(
+                padding: EdgeInsets.only(right: i < _otpLength - 1 ? 8 : 0),
+                child: _OtpBox(
+                  controller: _otpControllers[i],
+                  focusNode: _focusNodes[i],
+                  nextFocus: i < _otpLength - 1 ? _focusNodes[i + 1] : null,
+                  prevFocus: i > 0 ? _focusNodes[i - 1] : null,
+                  accentColor: accentColor,
+                ),
               ),
             ),
+          ),
+          if (errorMessage != null) ...[
+            const Gap(10),
+            _SoftBanner(
+              icon: Icons.warning_rounded,
+              color: AppColors.errorColor,
+              text: errorMessage,
+            ),
           ],
-
-          const Gap(24),
+          const Gap(12),
           SizedBox(
             width: double.infinity,
-            child: ElevatedButton(
+            child: FilledButton(
               onPressed: isVerifying ? null : () => _submitOtp(state),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: accentColor,
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.black,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 18),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                minimumSize: const Size.fromHeight(42),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(11),
+                ),
               ),
               child: isVerifying
                   ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
                     )
                   : Text(
-                      isInProgress ? 'Verify End OTP & Complete' : 'Verify Start OTP',
-                      style: AppTextStyles.buttonLabel.copyWith(color: Colors.white),
+                      isInProgress
+                          ? 'Verify End OTP'
+                          : 'Verify Start OTP',
+                      style: AppTextStyles.buttonLabel.copyWith(
+                        color: Colors.white,
+                        fontSize: 13,
+                      ),
                     ),
             ),
           ),
         ],
       ),
-    ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.05);
+    ).animate().fadeIn(duration: 280.ms).slideY(begin: 0.03, end: 0);
+  }
+}
+
+class _CompactAction extends StatelessWidget {
+  const _CompactAction({
+    required this.icon,
+    required this.label,
+    required this.tone,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color tone;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: tone.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(11),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(11),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 15, color: tone),
+              const Gap(6),
+              Text(
+                label,
+                style: AppTextStyles.bodySmall.copyWith(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                  color: tone,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SoftBanner extends StatelessWidget {
+  const _SoftBanner({
+    required this.icon,
+    required this.color,
+    required this.text,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 18),
+          const Gap(8),
+          Expanded(
+            child: Text(
+              text,
+              style: AppTextStyles.bodySmall.copyWith(
+                color: color,
+                height: 1.35,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -914,28 +1159,33 @@ class _OtpBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 44,
-      height: 54,
+      width: 40,
+      height: 46,
       child: TextField(
         controller: controller,
         focusNode: focusNode,
         keyboardType: TextInputType.number,
         maxLength: 1,
         textAlign: TextAlign.center,
-        style: AppTextStyles.headingMedium.copyWith(color: accentColor),
+        style: AppTextStyles.headingSmall.copyWith(
+          color: accentColor,
+          fontWeight: FontWeight.w800,
+        ),
         decoration: InputDecoration(
           counterText: '',
           filled: true,
-          fillColor: AppColors.otpBoxBg,
+          fillColor: Theme.of(context).brightness == Brightness.dark
+              ? const Color(0xFF1A1A1A)
+              : AppColors.otpBoxBg,
+          contentPadding: EdgeInsets.zero,
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: AppColors.borderColor, width: 1.5),
+            borderSide: const BorderSide(color: AppColors.borderColor, width: 1.2),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
             borderSide: BorderSide(color: accentColor, width: 2),
           ),
-          contentPadding: EdgeInsets.zero,
         ),
         onChanged: (value) {
           if (value.isNotEmpty && nextFocus != null) {
@@ -949,27 +1199,10 @@ class _OtpBox extends StatelessWidget {
   }
 }
 
-class _DetailChip extends StatelessWidget {
-  const _DetailChip(this.icon, this.label);
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 13, color: AppColors.textMuted),
-        const Gap(4),
-        Text(label, style: AppTextStyles.bodySmall),
-      ],
-    );
-  }
-}
-
 class _CompletedView extends StatelessWidget {
-  const _CompletedView({required this.task});
+  const _CompletedView({required this.task, required this.onBack});
   final Task task;
+  final Future<void> Function() onBack;
 
   @override
   Widget build(BuildContext context) {
@@ -984,12 +1217,14 @@ class _CompletedView extends StatelessWidget {
               Icons.celebration_rounded,
               color: AppColors.helperAccent,
               size: 72,
-            ).animate()
+            )
+                .animate()
                 .scale(duration: 600.ms, curve: Curves.elasticOut)
                 .fadeIn(duration: 300.ms),
             const Gap(24),
             Text('Job Complete!', style: AppTextStyles.headingLarge)
-                .animate().fadeIn(delay: 200.ms),
+                .animate()
+                .fadeIn(delay: 200.ms),
             const Gap(8),
             Text(
               'Great work! Your earnings have been credited to your helper wallet.',
@@ -1000,9 +1235,11 @@ class _CompletedView extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: AppColors.helperAccent.withOpacity(0.08),
+                color: AppColors.helperAccent.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.helperAccent.withOpacity(0.3)),
+                border: Border.all(
+                  color: AppColors.helperAccent.withValues(alpha: 0.3),
+                ),
               ),
               child: Column(
                 children: [
@@ -1010,32 +1247,40 @@ class _CompletedView extends StatelessWidget {
                   const Gap(4),
                   Text(
                     AppConfig.money(earnings),
-                    style: AppTextStyles.moneyLarge.copyWith(color: AppColors.helperAccent),
+                    style: AppTextStyles.moneyLarge
+                        .copyWith(color: AppColors.helperAccent),
                   ),
                 ],
               ),
-            ).animate().fadeIn(delay: 400.ms).scale(begin: const Offset(0.8, 0.8)),
+            )
+                .animate()
+                .fadeIn(delay: 400.ms)
+                .scale(begin: const Offset(0.8, 0.8)),
             const Gap(32),
             SizedBox(
               width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {
-                  // Ensure completed job is cleared from active lists
+              child: FilledButton(
+                onPressed: () async {
                   context.read<TaskBloc>().syncDemoTaskStatus(
                         task.copyWith(
                           status: TaskStatus.completed,
                           completedAt: task.completedAt ?? DateTime.now(),
                         ),
                       );
-                  context.go('/');
+                  await onBack();
                 },
-                style: ElevatedButton.styleFrom(
+                style: FilledButton.styleFrom(
                   backgroundColor: AppColors.helperAccent,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 18),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  minimumSize: const Size.fromHeight(52),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                 ),
-                child: const Text('Back to Job Feed', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                child: const Text(
+                  'Back to Jobs',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
               ),
             ).animate().fadeIn(delay: 500.ms),
           ],

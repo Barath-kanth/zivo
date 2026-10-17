@@ -1,5 +1,6 @@
 import { useMockAi, gcpProjectId } from '../config.js';
-import { generateGeminiMultimodalJson } from '../gemini.js';
+import { generateGeminiMultimodalJson, generateGeminiRace } from '../gemini.js';
+import { coerceTasks, mockPlan, type PlanTaskDraft } from './task_plan.js';
 
 export type VoiceSuggestResult = {
   pillar: 'voice';
@@ -10,7 +11,8 @@ export type VoiceSuggestResult = {
   description: string;
   confidence: number;
   explanation: string;
-  lang: 'en' | 'ta' | 'si';
+  /** Detected or requested language code (any BCP-47-ish / short code). */
+  lang: string;
 };
 
 type GeminiVoiceJson = {
@@ -42,10 +44,14 @@ const ALLOWED = new Set([
   'eventHelp',
   'photography',
   'homeRepair',
+  'phoneCheckIn',
+  'readingAloud',
+  'remoteTutoring',
+  'sightedAssist',
   'other',
 ]);
 
-function mockVoice(lang: 'en' | 'ta' | 'si'): VoiceSuggestResult {
+function mockVoice(lang: string): VoiceSuggestResult {
   if (lang === 'ta') {
     return {
       pillar: 'voice',
@@ -93,7 +99,7 @@ function mockVoice(lang: 'en' | 'ta' | 'si'): VoiceSuggestResult {
 
 function coerce(
   g: GeminiVoiceJson,
-  lang: 'en' | 'ta' | 'si',
+  lang: string,
   mode: 'mock' | 'gemini',
 ): VoiceSuggestResult {
   const category =
@@ -125,12 +131,15 @@ function coerce(
 export async function suggestFromVoice(input: {
   audioBytes?: Buffer;
   mimeType?: string;
-  lang?: 'en' | 'ta' | 'si';
+  /** Preferred / app locale hint — model still auto-detects any spoken language. */
+  lang?: string;
 }): Promise<VoiceSuggestResult> {
-  const lang = input.lang === 'ta' || input.lang === 'si' ? input.lang : 'en';
+  const langHint = (input.lang ?? 'auto').trim() || 'auto';
 
   if (useMockAi || !gcpProjectId || gcpProjectId === 'your-gcp-project-id') {
-    return mockVoice(lang);
+    const mockLang =
+      langHint === 'ta' || langHint === 'si' ? langHint : 'en';
+    return mockVoice(mockLang);
   }
 
   if (!input.audioBytes?.length) {
@@ -142,16 +151,17 @@ export async function suggestFromVoice(input: {
       ? input.mimeType
       : 'audio/webm';
 
-  const langName =
-    lang === 'ta' ? 'Tamil' : lang === 'si' ? 'Sinhala' : 'English';
-
-  const prompt = `You are Zivo task drafting for Sri Lanka neighborhood help.
-Listen to the audio (spoken ${langName}). Transcribe, then draft a short task post.
+  const prompt = `You are Zivo task drafting for Sri Lanka neighbourhood help.
+Listen to the audio in ANY language (Tamil, Sinhala, English, Hindi, Arabic, Chinese, French, Spanish, or mixed).
+Auto-detect the spoken language. Transcribe faithfully in the speaker's language, then draft a short task post.
 Return ONLY JSON:
-{"transcript":"...","title":"...","category":"one of queueStanding|laundry|groceryRun|homeCleaning|homeCooking|movingHelp|tutoring|techHelp|petCare|tailoring|driver|errandRun|gardening|documentWork|hospitalCompanion|babysitting|elderCare|eventHelp|photography|homeRepair|other","description":"2-4 sentences English the client can post","confidence":0.0-1.0}
+{"transcript":"...","detected_lang":"short code e.g. en|ta|si|hi|ar|zh|fr|es","title":"...","category":"one of queueStanding|laundry|groceryRun|homeCleaning|homeCooking|movingHelp|tutoring|techHelp|petCare|tailoring|driver|errandRun|gardening|documentWork|hospitalCompanion|babysitting|elderCare|eventHelp|photography|homeRepair|phoneCheckIn|readingAloud|remoteTutoring|sightedAssist|other","description":"2-4 sentences the client can post (prefer the speaker's language; English OK if mixed)","confidence":0.0-1.0}
+App locale hint (optional): ${langHint}.
 Rules: no illegal work; no asking helper for cash; keep description practical.`;
 
-  const g = await generateGeminiMultimodalJson<GeminiVoiceJson>({
+  const g = await generateGeminiMultimodalJson<
+    GeminiVoiceJson & { detected_lang?: string }
+  >({
     prompt,
     imageBytes: input.audioBytes,
     mimeType: mime,
@@ -160,5 +170,88 @@ Rules: no illegal work; no asking helper for cash; keep description practical.`;
       process.env.GEMINI_VISION_MODEL?.trim() ||
       'gemini-2.5-flash',
   });
-  return coerce(g, lang, 'gemini');
+  const detected =
+    (g.detected_lang ?? langHint).toString().trim().slice(0, 12) || 'auto';
+  return coerce(g, detected, 'gemini');
+}
+
+export type VoicePlanResult = VoiceSuggestResult & {
+  bundle_title: string;
+  plan_explanation: string;
+  tasks: PlanTaskDraft[];
+  /** Which model answered and how long the whole call took. */
+  model?: string;
+  latency_ms?: number;
+};
+
+/**
+ * Speak → understand → split, in ONE Gemini call (was two sequential calls: ~6-8 s healthy,
+ * minutes under quota stalls). Thinking is off, and two models race so a throttled bucket cannot
+ * stall the user.
+ */
+export async function voiceToPlan(input: {
+  audioBytes?: Buffer;
+  mimeType?: string;
+  lang?: string;
+}): Promise<VoicePlanResult> {
+  const langHint = (input.lang ?? 'auto').trim() || 'auto';
+  if (useMockAi || !gcpProjectId || gcpProjectId === 'your-gcp-project-id') {
+    const draft = mockVoice(langHint === 'ta' || langHint === 'si' ? langHint : 'en');
+    const plan = mockPlan(`${draft.transcript}. ${draft.description}`, draft.category);
+    return { ...draft, bundle_title: plan.bundle_title, plan_explanation: plan.explanation, tasks: plan.tasks };
+  }
+  if (!input.audioBytes?.length) throw new Error('audio file required for live voice plan');
+  const mime = input.mimeType?.startsWith('audio/') ? input.mimeType : 'audio/webm';
+
+  const prompt = `You are Zivo's voice task agent for Sri Lanka neighbourhood help.
+Listen to the audio (Tamil, Sinhala, English, or mixed; auto-detect). In ONE pass:
+1) transcribe faithfully in the speaker's language, 2) draft the main task, 3) split the need into 2-4 short bookable helper tasks (one task is fine if it is truly a single job).
+Return ONLY JSON:
+{"transcript":"...","detected_lang":"en|ta|si|...","title":"...","category":"${[...ALLOWED].join('|')}","description":"2-3 sentences, speaker's language","confidence":0.0-1.0,
+"bundle_title":"...","explanation":"1 short sentence","tasks":[{"title":"...","category":"same list","description":"2-3 sentences","estimated_hours":1,"goods_budget":0}]}
+Rules: no illegal work; never ask a helper to handle cash (goods_budget is paid from escrow); goods_budget only for shopping; keep it practical and brief.
+App locale hint: ${langHint}.`;
+
+  const primary =
+    process.env.VOICE_SUGGEST_MODEL?.trim() || process.env.GEMINI_VISION_MODEL?.trim() || 'gemini-2.5-flash';
+  const fallback = process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash-lite';
+  const { value: g, model, ms } = await generateGeminiRace<
+    GeminiVoiceJson & {
+      detected_lang?: string;
+      bundle_title?: string;
+      explanation?: string;
+      tasks?: unknown[];
+    }
+  >({
+    prompt,
+    media: input.audioBytes,
+    mimeType: mime,
+    models: primary === fallback ? [primary] : [primary, fallback],
+    thinkingBudget: 0,
+    hedgeMs: 5000,
+    timeoutMs: 22000,
+  });
+
+  const detected = (g.detected_lang ?? langHint).toString().trim().slice(0, 12) || 'auto';
+  const base = coerce(g, detected, 'gemini');
+  let tasks = coerceTasks(Array.isArray(g.tasks) ? g.tasks : []);
+  if (!tasks.length) {
+    tasks = [
+      {
+        title: base.title,
+        category: base.category,
+        description: base.description.length >= 20 ? base.description : `${base.description} Details to confirm in chat.`,
+        estimated_hours: 1,
+        goods_budget: 0,
+      },
+    ];
+  }
+  return {
+    ...base,
+    bundle_title: (g.bundle_title ?? base.title).trim().slice(0, 80),
+    plan_explanation: (g.explanation ?? '').trim().slice(0, 240),
+    tasks,
+    model,
+    latency_ms: ms,
+  };
 }

@@ -1,10 +1,15 @@
-import {
-  FunctionDeclarationSchemaType,
-  type FunctionDeclaration,
-} from '@google-cloud/vertexai';
+import { Type as FunctionDeclarationSchemaType, type FunctionDeclaration } from '@google/genai';
 import { useMockAi, gcpProjectId } from '../config.js';
 import { generateWithTools } from '../gemini.js';
-import { DISPATCH_RADIUS_KM, helpersForMatch, type TaskRow } from '../store.js';
+import { accessCardFor } from './abilities.js';
+import {
+  DISPATCH_RADIUS_KM,
+  computeTrustTier,
+  helpersForMatch,
+  listDisputesForHelper,
+  type TaskRow,
+  type UserProfile,
+} from '../store.js';
 
 export type MatchCandidate = {
   helperId: string;
@@ -15,6 +20,8 @@ export type MatchCandidate = {
   reasons: string[];
   trust_tier?: string;
   dispute_count?: number;
+  /** Disclosed-only. Informational — never part of `score`. */
+  access?: { abilities: string[]; note?: string };
 };
 
 export type MatchResult = {
@@ -32,34 +39,93 @@ export type MatchResult = {
 };
 
 const RESEARCH =
-  'Domain-Grounded Tool Orchestration (2608.30696) + AssetOpsBench (deterministic data layer ~99% vs pure-agent ~65%) + SPL (2607.07727): tools ground conflicting constraints; LLM explains the pick.';
+  'Domain-Grounded Tool Orchestration + live Firestore trust/dispute tools (no hardcoded helper tiers).';
 
-/** Deterministic trust / dispute layer (not invented by the model). */
-const TRUST_TIER: Record<string, 'gold' | 'silver' | 'bronze'> = {
-  h1: 'bronze',
-  h3: 'gold',
-};
+type Nearby = Awaited<ReturnType<typeof helpersForMatch>>;
 
-const DISPUTE_HISTORY: Record<
-  string,
-  Array<{ id: string; reason: string; status: string; daysAgo: number }>
-> = {
-  h1: [
-    {
-      id: 'd-h1-1',
-      reason: 'Goods missing vs receipt (milk short)',
-      status: 'upheld_against_helper',
-      daysAgo: 12,
-    },
-    {
-      id: 'd-h1-2',
-      reason: 'Late delivery dispute',
-      status: 'resolved_split',
-      daysAgo: 40,
-    },
-  ],
-  h3: [],
-};
+async function trustFor(helper: UserProfile): Promise<'gold' | 'silver' | 'bronze'> {
+  return computeTrustTier(helper);
+}
+
+async function scoreDeterministic(nearby: Nearby): Promise<MatchCandidate[]> {
+  const out: MatchCandidate[] = [];
+  for (const { helper, distanceKm } of nearby) {
+    const disputes = await listDisputesForHelper(helper.id);
+    const tier = await trustFor(helper);
+    const reasons: string[] = [
+      'Verified identity',
+      `${distanceKm.toFixed(2)} km`,
+      `Trust tier: ${tier} (from vouches/rating/jobs)`,
+    ];
+    // Ability is shown (if the helper disclosed it) but NEVER affects the score.
+    const access = accessCardFor(helper);
+    if (access) {
+      reasons.push(`Access note: ${access.abilities.join(', ')}${access.note ? ` — “${access.note}”` : ''}`);
+    }
+    let score = 100 - distanceKm * 8;
+    score += helper.rating_as_helper * 5;
+    if (helper.helper_skills.length) {
+      reasons.push(`Skills: ${helper.helper_skills.join(', ')}`);
+      score += 10;
+    }
+    if (tier === 'gold') score += 15;
+    if (tier === 'bronze') score -= 20;
+    if (disputes.length) {
+      reasons.push(`${disputes.length} dispute(s) on record — deprioritize`);
+      score -= disputes.length * 25;
+    }
+    out.push({
+      helperId: helper.id,
+      name: helper.full_name,
+      distanceKm: Number(distanceKm.toFixed(2)),
+      verified: helper.kyc_status === 'verified',
+      score: Math.round(score),
+      reasons,
+      trust_tier: tier,
+      dispute_count: disputes.length,
+      ...(access ? { access } : {}),
+    });
+  }
+  return out.sort((a, b) => b.score - a.score);
+}
+
+async function mockMatch(task: TaskRow, nearby: Nearby): Promise<MatchResult> {
+  const candidates = await scoreDeterministic(nearby);
+  const nearest = [...candidates].sort((a, b) => a.distanceKm - b.distanceKm)[0];
+  const selected = candidates[0];
+  const nearestDep =
+    Boolean(nearest && selected && nearest.helperId !== selected.helperId);
+
+  return {
+    pillar: 'C',
+    mode: 'mock',
+    radiusKm: DISPATCH_RADIUS_KM,
+    candidates,
+    selected_helper_id: selected?.helperId,
+    selected_helper_name: selected?.name,
+    nearest_helper_id: nearest?.helperId,
+    nearest_deprioritized: nearestDep,
+    explanation: nearestDep
+      ? `Nearest helper ${nearest!.name} (${nearest!.distanceKm} km) deprioritized due to dispute history / bronze trust; selected ${selected!.name} with cleaner constraint fit.`
+      : selected
+        ? `Selected ${selected.name} under KYC + radius + live trust constraints.`
+        : 'No verified helpers in radius.',
+    research_note: RESEARCH,
+    tool_trace: [
+      { name: 'get_nearby_helpers', args: {}, result: 'live' },
+      {
+        name: 'get_dispute_history',
+        args: { helper_id: nearest?.helperId },
+        result: 'firestore',
+      },
+      {
+        name: 'get_helper_trust_tier',
+        args: { helper_id: nearest?.helperId },
+        result: 'computed',
+      },
+    ],
+  };
+}
 
 function buildTools(): FunctionDeclaration[] {
   return [
@@ -79,7 +145,8 @@ function buildTools(): FunctionDeclaration[] {
     },
     {
       name: 'get_helper_trust_tier',
-      description: 'Return trust tier for a helper id (gold|silver|bronze).',
+      description:
+        'Return live trust tier for a helper id (gold|silver|bronze) from vouches/rating/jobs.',
       parameters: {
         type: FunctionDeclarationSchemaType.OBJECT,
         properties: {
@@ -90,7 +157,7 @@ function buildTools(): FunctionDeclaration[] {
     },
     {
       name: 'get_dispute_history',
-      description: 'Return recent dispute records for a helper id.',
+      description: 'Return dispute records for a helper id from Firestore tasks.',
       parameters: {
         type: FunctionDeclarationSchemaType.OBJECT,
         properties: {
@@ -100,77 +167,6 @@ function buildTools(): FunctionDeclaration[] {
       },
     },
   ];
-}
-
-function scoreDeterministic(
-  nearby: Awaited<ReturnType<typeof helpersForMatch>>,
-): MatchCandidate[] {
-  return nearby
-    .map(({ helper, distanceKm }) => {
-      const disputes = DISPUTE_HISTORY[helper.id] ?? [];
-      const tier = TRUST_TIER[helper.id] ?? 'silver';
-      const reasons: string[] = [
-        'Verified identity',
-        `${distanceKm.toFixed(2)} km`,
-        `Trust tier: ${tier}`,
-      ];
-      let score = 100 - distanceKm * 8;
-      score += helper.rating_as_helper * 5;
-      if (helper.helper_skills.length) {
-        reasons.push(`Skills: ${helper.helper_skills.join(', ')}`);
-        score += 10;
-      }
-      if (tier === 'gold') score += 15;
-      if (tier === 'bronze') score -= 20;
-      if (disputes.length) {
-        reasons.push(`${disputes.length} recent dispute(s) — deprioritize`);
-        score -= disputes.length * 25;
-      }
-      return {
-        helperId: helper.id,
-        name: helper.full_name,
-        distanceKm: Number(distanceKm.toFixed(2)),
-        verified: helper.kyc_status === 'verified',
-        score: Math.round(score),
-        reasons,
-        trust_tier: tier,
-        dispute_count: disputes.length,
-      };
-    })
-    .sort((a, b) => b.score - a.score);
-}
-
-function mockMatch(
-  task: TaskRow,
-  nearby: Awaited<ReturnType<typeof helpersForMatch>>,
-): MatchResult {
-  const candidates = scoreDeterministic(nearby);
-  const nearest = [...candidates].sort((a, b) => a.distanceKm - b.distanceKm)[0];
-  const selected = candidates[0];
-  const nearestDep =
-    Boolean(nearest && selected && nearest.helperId !== selected.helperId);
-
-  return {
-    pillar: 'C',
-    mode: 'mock',
-    radiusKm: DISPATCH_RADIUS_KM,
-    candidates,
-    selected_helper_id: selected?.helperId,
-    selected_helper_name: selected?.name,
-    nearest_helper_id: nearest?.helperId,
-    nearest_deprioritized: nearestDep,
-    explanation: nearestDep
-      ? `Nearest helper ${nearest!.name} (${nearest!.distanceKm} km) deprioritized due to dispute history / bronze trust; selected ${selected!.name} with cleaner constraint fit.`
-      : selected
-        ? `Selected ${selected.name} under KYC + radius + trust constraints.`
-        : 'No verified helpers in radius.',
-    research_note: RESEARCH,
-    tool_trace: [
-      { name: 'get_nearby_helpers', args: {}, result: 'mock' },
-      { name: 'get_dispute_history', args: { helper_id: nearest?.helperId }, result: 'mock' },
-      { name: 'get_helper_trust_tier', args: { helper_id: nearest?.helperId }, result: 'mock' },
-    ],
-  };
 }
 
 function parseSelection(
@@ -206,14 +202,17 @@ export async function matchHelpers(task: TaskRow): Promise<MatchResult> {
     return mockMatch(task, nearby);
   }
 
-  const nearbyPayload = nearby.map(({ helper, distanceKm }) => ({
-    helper_id: helper.id,
-    name: helper.full_name,
-    distance_km: Number(distanceKm.toFixed(2)),
-    skills: helper.helper_skills,
-    rating: helper.rating_as_helper,
-    verified: helper.kyc_status === 'verified',
-  }));
+  const nearbyPayload = await Promise.all(
+    nearby.map(async ({ helper, distanceKm }) => ({
+      helper_id: helper.id,
+      name: helper.full_name,
+      distance_km: Number(distanceKm.toFixed(2)),
+      skills: helper.helper_skills,
+      rating: helper.rating_as_helper,
+      verified: helper.kyc_status === 'verified',
+      trust_tier: await trustFor(helper),
+    })),
+  );
 
   const handler = async (name: string, args: Record<string, unknown>) => {
     if (name === 'get_nearby_helpers') {
@@ -221,16 +220,17 @@ export async function matchHelpers(task: TaskRow): Promise<MatchResult> {
     }
     if (name === 'get_helper_trust_tier') {
       const id = String(args.helper_id ?? '');
+      const row = nearby.find((n) => n.helper.id === id)?.helper;
       return {
         helper_id: id,
-        trust_tier: TRUST_TIER[id] ?? 'silver',
+        trust_tier: row ? await trustFor(row) : 'silver',
       };
     }
     if (name === 'get_dispute_history') {
       const id = String(args.helper_id ?? '');
       return {
         helper_id: id,
-        disputes: DISPUTE_HISTORY[id] ?? [],
+        disputes: await listDisputesForHelper(id),
       };
     }
     return { error: `unknown tool ${name}` };
@@ -238,7 +238,7 @@ export async function matchHelpers(task: TaskRow): Promise<MatchResult> {
 
   try {
     const { text, toolTrace } = await generateWithTools({
-      systemPrompt: `You are Zivo Pillar C — agentic constraint-based helper matching for Sri Lanka hyperlocal tasks.
+      systemPrompt: `You are Zivo Pillar C — agentic constraint-based helper matching for Sri Lanka hyperlocal care.
 
 You MUST call the deterministic tools (do not invent distances, trust tiers, or disputes):
 1) get_nearby_helpers
@@ -247,7 +247,7 @@ You MUST call the deterministic tools (do not invent distances, trust tiers, or 
 
 Policy:
 - Prefer verified helpers inside radius.
-- Deprioritize helpers with recent upheld disputes even if they are nearest.
+- Deprioritize helpers with recent disputes even if they are nearest.
 - Prefer gold trust over bronze when constraints conflict.
 - After tools, reply with ONLY JSON:
 {"selected_helper_id":"...","explanation":"natural language why nearest was or was not chosen"}`,
@@ -262,13 +262,12 @@ Call tools, then pick one helper.`,
       maxTurns: 8,
     });
 
-    const scored = scoreDeterministic(nearby);
+    const scored = await scoreDeterministic(nearby);
     const nearest = [...scored].sort((a, b) => a.distanceKm - b.distanceKm)[0];
     const { id, explanation: parsedExplanation } = parseSelection(text, scored);
     const selected =
       scored.find((c) => c.helperId === id) ?? scored[0];
 
-    // Re-order: selected first for UI demo beat
     const candidates = selected
       ? [selected, ...scored.filter((c) => c.helperId !== selected.helperId)]
       : scored;
@@ -284,7 +283,7 @@ Call tools, then pick one helper.`,
         : nearestDep
           ? `Nearest helper ${nearest!.name} (${nearest!.distanceKm} km, ${nearest!.trust_tier}, ${nearest!.dispute_count} dispute(s)) was deprioritized. Selected ${selected!.name} (${selected!.distanceKm} km, ${selected!.trust_tier}) after tool-grounded constraint reasoning.`
           : selected
-            ? `Selected ${selected.name} using get_nearby_helpers + trust/dispute tools.`
+            ? `Selected ${selected.name} using get_nearby_helpers + live trust/dispute tools.`
             : 'No verified helpers in radius.';
 
     return {
@@ -301,7 +300,6 @@ Call tools, then pick one helper.`,
       research_note: RESEARCH,
     };
   } catch (err) {
-    // Never leak Vertex/API errors into client-facing copy (429, JSON, etc.).
     console.error('[matchHelpers] gemini tools failed', err);
     return mockMatch(task, nearby);
   }

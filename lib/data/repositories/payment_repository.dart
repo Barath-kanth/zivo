@@ -29,7 +29,8 @@ class PaymentRepository {
     await _api.postJson('/wallet/topup', {'amount': amount});
   }
 
-  /// Cup / GCP: always credit via Cloud Run (PayHere removed).
+  /// Card top-up via Cloud Run. Full PAN never leaves the client —
+  /// only optional brand + last4 are sent for the ledger note.
   Future<String> startTopUp({
     required String userId,
     required double amount,
@@ -37,9 +38,16 @@ class PaymentRepository {
     String? lastName,
     String? email,
     String? phone,
+    String? cardBrand,
+    String? cardLast4,
   }) async {
-    await mockTopUp(userId: userId, amount: amount);
-    return 'demo_credited';
+    if (userId.startsWith('demo-')) return 'demo_credited';
+    await _api.postJson('/wallet/topup', {
+      'amount': amount,
+      if (cardBrand != null) 'card_brand': cardBrand,
+      if (cardLast4 != null) 'card_last4': cardLast4,
+    });
+    return 'card_credited';
   }
 
   Future<PayHereCheckoutSession> createPayHereCheckout({

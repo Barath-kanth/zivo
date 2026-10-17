@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
 import 'package:hyperlocal/core/constants/app_brand.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
+import 'package:hyperlocal/core/constants/zivo_palette.dart';
 import 'package:hyperlocal/core/constants/app_config.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/constants/community_guidelines.dart';
@@ -18,10 +19,10 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.backgroundDark,
+      backgroundColor: ZivoPalette.of(context).canvas,
       appBar: AppBar(
         title: Text('Settings', style: AppTextStyles.headingMedium),
-        backgroundColor: AppColors.backgroundDark,
+        backgroundColor: ZivoPalette.of(context).canvas,
         elevation: 0,
       ),
       body: ListView(
@@ -29,7 +30,7 @@ class SettingsScreen extends StatelessWidget {
         children: [
           Text('Account', style: AppTextStyles.labelLarge),
           const Gap(8),
-          _card([
+          _card(context, [
             _row(
               context,
               Icons.person_outline,
@@ -60,7 +61,7 @@ class SettingsScreen extends StatelessWidget {
           const Gap(20),
           Text('Safety & legal', style: AppTextStyles.labelLarge),
           const Gap(8),
-          _card([
+          _card(context, [
             _row(
               context,
               Icons.gavel_outlined,
@@ -89,9 +90,9 @@ class SettingsScreen extends StatelessWidget {
           const Gap(20),
           Text('App', style: AppTextStyles.labelLarge),
           const Gap(8),
-          _card([
+          _card(context, [
             ListTile(
-              leading: const Icon(Icons.info_outline),
+              leading: Icon(Icons.info_outline),
               title: Text('Guidelines version', style: AppTextStyles.bodyLarge),
               subtitle: Text(
                 CommunityGuidelines.currentVersion,
@@ -132,7 +133,7 @@ class SettingsScreen extends StatelessWidget {
           Text(
             'Signing out clears your session on this device. '
             'Demo sessions expire automatically after 10 minutes.',
-            style: AppTextStyles.bodySmall.copyWith(color: AppColors.textMuted),
+            style: AppTextStyles.bodySmall.copyWith(color: ZivoPalette.of(context).textMuted),
             textAlign: TextAlign.center,
           ),
         ],
@@ -140,9 +141,9 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  Widget _card(List<Widget> children) {
+  Widget _card(BuildContext context, List<Widget> children) {
     return Material(
-      color: AppColors.surfaceDark,
+      color: ZivoPalette.of(context).surface,
       borderRadius: BorderRadius.circular(14),
       child: Container(
         decoration: BoxDecoration(
@@ -164,7 +165,7 @@ class SettingsScreen extends StatelessWidget {
     return ListTile(
       leading: Icon(icon, color: AppColors.accent),
       title: Text(title, style: AppTextStyles.bodyLarge),
-      trailing: const Icon(Icons.chevron_right, color: AppColors.textMuted),
+      trailing: Icon(Icons.chevron_right, color: ZivoPalette.of(context).textMuted),
       onTap: onTap,
     );
   }

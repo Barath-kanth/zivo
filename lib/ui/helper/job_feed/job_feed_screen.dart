@@ -616,7 +616,7 @@ class JobCard extends StatelessWidget {
       if (s is TaskAccepted && s.task.id == task.id) {
         sub.cancel();
         if (rootCtx.mounted) {
-          rootCtx.go('/job/${s.task.id}/active');
+          rootCtx.push('/job/${s.task.id}/active');
         }
       } else if (s is TaskFailure) {
         sub.cancel();

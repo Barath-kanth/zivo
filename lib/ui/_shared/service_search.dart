@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
+import 'package:hyperlocal/core/l10n/locale_cubit.dart';
 import 'package:hyperlocal/data/models/task.dart';
 import 'package:hyperlocal/ui/client/task_creation/category_task_guide.dart';
 
@@ -9,11 +11,12 @@ import 'category_icon.dart';
 class ServiceSearch extends SearchDelegate<TaskCategory?> {
   ServiceSearch() : super(searchFieldLabel: 'Search services, e.g. laundry');
 
-  static List<TaskCategory> matching(String query) {
+  static List<TaskCategory> matching(String query, {LocaleCubit? locale}) {
     final terms = query.toLowerCase().trim().split(RegExp(r'\s+'));
     return TaskCategory.values.where((category) {
+      final localized = locale?.category(category) ?? category.displayName;
       final text =
-          '${category.displayName} ${category.description} '
+          '$localized ${category.displayName} ${category.description} '
                   '${CategoryTaskGuide.services(category).join(' ')}'
               .toLowerCase();
       return terms.every(text.contains);
@@ -44,7 +47,8 @@ class ServiceSearch extends SearchDelegate<TaskCategory?> {
   Widget buildResults(BuildContext context) => _results(context);
 
   Widget _results(BuildContext context) {
-    final categories = matching(query);
+    final locale = context.read<LocaleCubit>();
+    final categories = matching(query, locale: locale);
     if (categories.isEmpty) {
       return Center(
         child: Padding(
@@ -90,7 +94,7 @@ class ServiceSearch extends SearchDelegate<TaskCategory?> {
               vertical: 10,
             ),
             leading: CategoryIconBadge(category, size: 44),
-            title: Text(category.displayName),
+            title: Text(locale.category(category)),
             subtitle: Text(category.description),
             trailing: const Icon(Icons.chevron_right_rounded),
             onTap: () => close(context, category),

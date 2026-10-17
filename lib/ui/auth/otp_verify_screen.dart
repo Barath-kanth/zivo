@@ -11,8 +11,6 @@ import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/router/app_router.dart';
 import 'package:hyperlocal/core/services/auth_service.dart';
 import 'package:hyperlocal/core/utils/phone_utils.dart';
-import 'package:hyperlocal/ui/_shared/a11y_widgets.dart';
-
 class OtpVerifyScreen extends StatefulWidget {
   const OtpVerifyScreen({
     super.key,
@@ -110,16 +108,7 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
       body: BlocConsumer<AuthBloc, AuthState>(
         listener: (context, state) {
           if (state is AuthAuthenticated || state is AuthNeedsOnboarding) {
-            final dest = widget.returnTo;
-            if (dest != null && dest.isNotEmpty) {
-              try {
-                context.go(Uri.decodeComponent(dest));
-              } catch (_) {
-                context.go(dest);
-              }
-            } else {
-              context.go(AppRoutes.shell);
-            }
+            context.go(AppRoutes.afterLogin(widget.returnTo));
           } else if (state is AuthOtpSent) {
             setState(() {
               _freeCode = state.freeDevOtpCode;
@@ -158,14 +147,6 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  A11yAuthBar(
-                    readText: _freeCode != null
-                        ? 'Enter OTP. Code sent to ${PhoneUtils.formatDisplay(widget.phone)}. Demo code is ${_freeCode!.split('').join(' ')}. Enter the six digits and verify.'
-                        : 'Enter OTP. Code sent to ${PhoneUtils.formatDisplay(widget.phone)}. Enter the six digit code from SMS and verify.',
-                    hint:
-                        'Zivo OTP verify screen for ${PhoneUtils.formatDisplay(widget.phone)}',
-                  ),
-                  const Gap(16),
                   Text('Enter OTP', style: AppTextStyles.displayMedium),
                   const Gap(8),
                   Text(

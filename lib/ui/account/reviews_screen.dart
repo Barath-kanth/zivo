@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gap/gap.dart';
 import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
+import 'package:hyperlocal/core/constants/zivo_palette.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/data/models/user_review.dart';
 import 'package:hyperlocal/data/repositories/trust_repository.dart';
@@ -39,10 +40,10 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.backgroundDark,
+      backgroundColor: ZivoPalette.of(context).canvas,
       appBar: AppBar(
         title: Text('Reviews', style: AppTextStyles.headingMedium),
-        backgroundColor: AppColors.backgroundDark,
+        backgroundColor: ZivoPalette.of(context).canvas,
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -67,7 +68,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                     return Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: AppColors.surfaceDark,
+                        color: ZivoPalette.of(context).surface,
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(color: AppColors.borderColor),
                       ),
@@ -97,7 +98,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                           Text(
                             r.isAboutHelper ? 'As helper' : 'As client',
                             style: AppTextStyles.bodySmall.copyWith(
-                              color: AppColors.textMuted,
+                              color: ZivoPalette.of(context).textMuted,
                               fontSize: 10,
                             ),
                           ),

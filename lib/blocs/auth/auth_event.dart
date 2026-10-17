@@ -83,6 +83,15 @@ class AuthOnboardingCompleted extends AuthEvent {
   List<Object?> get props => [profile];
 }
 
+/// Keep [AuthBloc] in sync when ModeCubit toggles helper/client (avoids shell
+/// remount resetting UI to a stale `is_helper_active` snapshot).
+class AuthProfileSynced extends AuthEvent {
+  const AuthProfileSynced(this.profile);
+  final UserProfile profile;
+  @override
+  List<Object?> get props => [profile];
+}
+
 /// Reload profile from Supabase (e.g. after ops KYC approval).
 class AuthProfileRefreshRequested extends AuthEvent {}
 

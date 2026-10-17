@@ -11,7 +11,6 @@ import 'package:hyperlocal/core/constants/app_config.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/router/app_router.dart';
 import 'package:hyperlocal/core/utils/phone_utils.dart';
-import 'package:hyperlocal/ui/_shared/a11y_widgets.dart';
 import 'package:hyperlocal/ui/_shared/zivo_logo.dart';
 
 /// Phone-first login (free OTP) + Google; email under "More options".
@@ -71,17 +70,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _goAfterAuth() {
-    final dest = _returnTo;
-    if (dest != null && dest.isNotEmpty) {
-      try {
-        context.go(Uri.decodeComponent(dest));
-        return;
-      } catch (_) {
-        context.go(dest);
-        return;
-      }
-    }
-    context.go(AppRoutes.shell);
+    context.go(AppRoutes.afterLogin(_returnTo));
   }
 
   void _sendOtp() {
@@ -203,15 +192,6 @@ class _LoginScreenState extends State<LoginScreen> {
                                 tooltip: 'Back to welcome',
                               ),
                             ),
-                            A11yAuthBar(
-                              readText: _isSignUp
-                                  ? 'Create a Zivo account. Enter your mobile number for a free OTP, or use email signup with name and password.'
-                                  : 'Sign in to Zivo. Enter your Sri Lanka mobile number for a free OTP, or use email and password.',
-                              hint: _isSignUp
-                                  ? 'Zivo signup screen — phone OTP or email register'
-                                  : 'Zivo login screen — phone OTP or email sign-in',
-                            ),
-                            const Gap(12),
                             if (!wide) ...[
                               const Center(
                                 child: ZivoLogo(

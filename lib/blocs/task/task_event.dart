@@ -57,10 +57,11 @@ class TaskAccept extends TaskEvent {
 }
 
 class TaskCancel extends TaskEvent {
-  const TaskCancel(this.taskId);
+  const TaskCancel(this.taskId, {this.reason = ''});
   final String taskId;
+  final String reason;
   @override
-  List<Object?> get props => [taskId];
+  List<Object?> get props => [taskId, reason];
 }
 
 class TaskRealtimeUpdated extends TaskEvent {

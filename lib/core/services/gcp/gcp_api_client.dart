@@ -48,12 +48,27 @@ class GcpApiClient {
     };
   }
 
+  /// No request may hang forever (a stalled Vertex call used to leave the UI spinning for minutes).
+  static const _timeout = Duration(seconds: 40);
+  static const _uploadTimeout = Duration(seconds: 50);
+
+  Future<T> _bounded<T>(Future<T> f, Duration limit) async {
+    try {
+      return await f.timeout(limit);
+    } on TimeoutException {
+      throw AppAuthException(
+        'This is taking longer than expected. Please try again in a moment.',
+        statusCode: 408,
+      );
+    }
+  }
+
   Future<Map<String, dynamic>> getJson(
     String path, {
     Map<String, String>? query,
     bool auth = true,
   }) async {
-    final res = await _http.get(_uri(path, query), headers: _headers(auth: auth));
+    final res = await _bounded(_http.get(_uri(path, query), headers: _headers(auth: auth)), _timeout);
     return _decode(res);
   }
 
@@ -62,10 +77,13 @@ class GcpApiClient {
     Map<String, dynamic> body, {
     bool auth = true,
   }) async {
-    final res = await _http.post(
-      _uri(path),
-      headers: _headers(auth: auth),
-      body: jsonEncode(body),
+    final res = await _bounded(
+      _http.post(
+        _uri(path),
+        headers: _headers(auth: auth),
+        body: jsonEncode(body),
+      ),
+      _timeout,
     );
     return _decode(res);
   }
@@ -141,8 +159,10 @@ class GcpApiClient {
         type: f.contentType,
       );
     }
-    final streamed = await _http.send(req);
-    final res = await http.Response.fromStream(streamed);
+    final res = await _bounded(
+      _http.send(req).then(http.Response.fromStream),
+      _uploadTimeout,
+    );
     return _decode(res);
   }
 

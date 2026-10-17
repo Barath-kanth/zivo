@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:hyperlocal/blocs/otp/otp_bloc.dart';
 import 'package:flutter/services.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
+import 'package:hyperlocal/core/constants/zivo_palette.dart';
 import 'package:hyperlocal/core/constants/app_config.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/utils/humanize_error.dart';
@@ -19,6 +20,10 @@ import 'package:hyperlocal/ui/_shared/empty_state_widget.dart';
 import 'package:hyperlocal/ui/_shared/trust_review_sheet.dart';
 import 'package:hyperlocal/ui/_shared/match_explain_card.dart';
 import 'package:hyperlocal/ui/_shared/a11y_widgets.dart';
+import 'package:hyperlocal/ui/accessibility/ability_job_widgets.dart';
+import 'package:hyperlocal/ui/accessibility/access_audit_sheet.dart';
+import 'package:hyperlocal/ui/_shared/chat_unread_badge.dart';
+import 'package:hyperlocal/ui/_shared/zivo_live_map.dart';
 
 class TaskTrackingScreen extends StatefulWidget {
   const TaskTrackingScreen({super.key, required this.taskId});
@@ -122,18 +127,8 @@ class _TaskTrackingScreenState extends State<TaskTrackingScreen> {
           : path;
       await Clipboard.setData(ClipboardData(text: link));
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Family live link copied. Share it so relatives can see when a helper is coming.\n$link',
-          ),
-          duration: const Duration(seconds: 5),
-          action: SnackBarAction(
-            label: 'Open',
-            onPressed: () => context.push(path),
-          ),
-        ),
-      );
+      // No sticky snackbar — copy is enough; both client & helper stay clean.
+      ScaffoldMessenger.of(context).clearSnackBars();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -271,18 +266,24 @@ class _TaskTrackingScreenState extends State<TaskTrackingScreen> {
           );
         }
 
+        final palette = ZivoPalette.of(context);
         return Scaffold(
-          backgroundColor: AppColors.backgroundDark,
+          backgroundColor: palette.canvas,
           appBar: AppBar(
-            title: const Text('Task Tracking'),
+            backgroundColor: palette.canvas,
+            foregroundColor: palette.textPrimary,
+            title: Text(
+              'Task Tracking',
+              style: AppTextStyles.headingSmall.copyWith(color: palette.textPrimary),
+            ),
             leading: IconButton(
-              icon: const Icon(Icons.arrow_back_ios_new_rounded),
+              icon: Icon(Icons.arrow_back_ios_new_rounded, color: palette.textPrimary),
               onPressed: _goBack,
             ),
             actions: [
               TextButton.icon(
                 onPressed: () => _shareFamilyLive(current),
-                icon: const Icon(Icons.share_outlined, size: 18),
+                icon: Icon(Icons.share_outlined, size: 18),
                 label: const Text('Family live'),
               ),
             ],
@@ -306,7 +307,7 @@ class _TaskTrackingScreenState extends State<TaskTrackingScreen> {
                 Text(
                   'Bundle · ${current.bundleTitle}',
                   style: AppTextStyles.bodySmall.copyWith(
-                    color: AppColors.textMuted,
+                    color: ZivoPalette.of(context).textMuted,
                   ),
                 ),
               ],
@@ -343,15 +344,33 @@ class _TaskTrackingScreenState extends State<TaskTrackingScreen> {
         ? task.matchExplanation!
         : ranking?['explanation']?.toString() ??
             'Matched using skills, distance, availability and trust.';
-    return MatchExplainCard(
-      explanation: explanation,
-      reasons: reasons,
-      helperName: task.helperDisplayName ??
-          selectedCand?['name']?.toString() ??
-          'your helper',
-      mode: task.matchMode ?? ranking?['mode']?.toString(),
-      nearestDeprioritized: ranking?['nearest_deprioritized'] == true,
-      compact: true,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        AccessAuditCard(
+          task: task,
+          onAdd: () async {
+            final res = await showAccessAudit(context, taskId: task.id);
+            if (res != null && mounted) setState(() {});
+          },
+        ),
+        AccessNoteCard(
+          task: task,
+          onChanged: () {
+            if (mounted && context.canPop()) context.pop();
+          },
+        ),
+        MatchExplainCard(
+          explanation: explanation,
+          reasons: reasons,
+          helperName: task.helperDisplayName ??
+              selectedCand?['name']?.toString() ??
+              'your helper',
+          mode: task.matchMode ?? ranking?['mode']?.toString(),
+          nearestDeprioritized: ranking?['nearest_deprioritized'] == true,
+          compact: true,
+        ),
+      ],
     );
   }
 
@@ -391,7 +410,7 @@ class _TaskTrackingScreenState extends State<TaskTrackingScreen> {
                       height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(Icons.refresh_rounded, size: 20),
+                  : Icon(Icons.refresh_rounded, size: 20),
             ),
           ],
         ),
@@ -407,7 +426,7 @@ class _TaskTrackingScreenState extends State<TaskTrackingScreen> {
           Text(
             'No verified helpers in range yet. They can still accept from Jobs.',
             style: AppTextStyles.bodyMedium.copyWith(
-              color: AppColors.textMuted,
+              color: ZivoPalette.of(context).textMuted,
             ),
           )
         else ...[
@@ -449,8 +468,8 @@ class _TaskTrackingScreenState extends State<TaskTrackingScreen> {
   }
 }
 
-/// Courier-style live tracking: map plane + bottom sheet.
-class _LiveTrackingScaffold extends StatelessWidget {
+/// Courier-style live tracking: Google Map plane + collapsible bottom sheet.
+class _LiveTrackingScaffold extends StatefulWidget {
   const _LiveTrackingScaffold({
     required this.task,
     required this.otpState,
@@ -471,6 +490,23 @@ class _LiveTrackingScaffold extends StatelessWidget {
   final VoidCallback onShareFamily;
   final Widget explainCard;
 
+  @override
+  State<_LiveTrackingScaffold> createState() => _LiveTrackingScaffoldState();
+}
+
+class _LiveTrackingScaffoldState extends State<_LiveTrackingScaffold> {
+  /// When true, the card collapses so the Google Map fills the screen.
+  bool _mapFocused = false;
+
+  Task get task => widget.task;
+  OtpState get otpState => widget.otpState;
+  VoidCallback get onBack => widget.onBack;
+  VoidCallback get onChat => widget.onChat;
+  VoidCallback get onTrust => widget.onTrust;
+  VoidCallback get onDispute => widget.onDispute;
+  VoidCallback get onShareFamily => widget.onShareFamily;
+  Widget get explainCard => widget.explainCard;
+
   String get _etaLabel {
     final mins = (task.estimatedHours * 60).round().clamp(5, 180);
     if (task.status == TaskStatus.inProgress) {
@@ -486,20 +522,40 @@ class _LiveTrackingScaffold extends StatelessWidget {
       task.locationAddress ??
       'Task location nearby';
 
+  void _openFullMap() {
+    openZivoLiveMap(
+      context,
+      center: task.location,
+      label: _address,
+      showHelpers: true,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottomPad = MediaQuery.paddingOf(context).bottom;
+    final palette = ZivoPalette.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    final pin = task.location;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFE8F0EA),
+      backgroundColor: isDark ? palette.canvas : const Color(0xFFE8F0EA),
       body: Stack(
         children: [
-          // Map plane
+          // Google Maps — tap empty map (when focused) or expand for fullscreen.
           Positioned.fill(
-            child: _SimpleTrackMap(
-              destinationLabel: _address,
-              inProgress: task.status == TaskStatus.inProgress,
-            ),
+            child: _mapFocused
+                ? GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTap: _openFullMap,
+                    child: AbsorbPointer(
+                      child: ZivoLiveMapFill(center: pin),
+                    ),
+                  )
+                : AbsorbPointer(
+                    child: ZivoLiveMapFill(center: pin),
+                  ),
           ),
           // Top bar
           SafeArea(
@@ -509,19 +565,22 @@ class _LiveTrackingScaffold extends StatelessWidget {
               child: Row(
                 children: [
                   Material(
-                    color: Colors.white,
+                    color: palette.card,
                     shape: const CircleBorder(),
                     elevation: 2,
                     child: IconButton(
-                      icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                          size: 18),
+                      icon: Icon(
+                        Icons.arrow_back_ios_new_rounded,
+                        size: 18,
+                        color: palette.textPrimary,
+                      ),
                       onPressed: onBack,
                     ),
                   ),
                   const Gap(8),
                   Expanded(
                     child: Material(
-                      color: Colors.white.withValues(alpha: 0.94),
+                      color: palette.card.withValues(alpha: 0.96),
                       borderRadius: BorderRadius.circular(22),
                       elevation: 2,
                       child: Padding(
@@ -534,31 +593,53 @@ class _LiveTrackingScaffold extends StatelessWidget {
                           textAlign: TextAlign.center,
                           style: AppTextStyles.headingSmall.copyWith(
                             fontSize: 16,
+                            color: palette.textPrimary,
                           ),
                         ),
                       ),
                     ),
                   ),
                   const Gap(8),
-                  const SizedBox(width: 48),
+                  Material(
+                    color: palette.card,
+                    shape: const CircleBorder(),
+                    elevation: 2,
+                    child: IconButton(
+                      tooltip: 'Expand map',
+                      icon: Icon(
+                        Icons.open_in_full_rounded,
+                        size: 18,
+                        color: palette.accent,
+                      ),
+                      onPressed: _openFullMap,
+                    ),
+                  ),
                 ],
               ),
             ),
           ),
-          // Bottom sheet
+          // Bottom sheet — collapses when "See whole map" so map fills the view.
           Align(
             alignment: Alignment.bottomCenter,
-            child: Container(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 280),
+              curve: Curves.easeOutCubic,
               width: double.infinity,
               constraints: const BoxConstraints(maxWidth: 520),
               margin: EdgeInsets.fromLTRB(12, 0, 12, 12 + bottomPad),
-              padding: const EdgeInsets.fromLTRB(18, 10, 18, 16),
+              padding: EdgeInsets.fromLTRB(
+                18,
+                10,
+                18,
+                _mapFocused ? 12 : 16,
+              ),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: palette.card,
                 borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: palette.border),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.12),
+                    color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.12),
                     blurRadius: 24,
                     offset: const Offset(0, 8),
                   ),
@@ -568,20 +649,81 @@ class _LiveTrackingScaffold extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Center(
-                    child: Container(
-                      width: 36,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: AppColors.borderColor,
-                        borderRadius: BorderRadius.circular(2),
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onVerticalDragUpdate: (d) {
+                      if (d.primaryDelta != null && d.primaryDelta! > 10) {
+                        setState(() => _mapFocused = true);
+                      } else if (d.primaryDelta != null &&
+                          d.primaryDelta! < -10) {
+                        setState(() => _mapFocused = false);
+                      }
+                    },
+                    onTap: () {
+                      if (_mapFocused) setState(() => _mapFocused = false);
+                    },
+                    child: Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: palette.border,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
                     ),
                   ),
-                  const Gap(14),
+                  if (_mapFocused) ...[
+                    const Gap(10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _etaLabel,
+                            style: AppTextStyles.bodySmall.copyWith(
+                              color: palette.textPrimary,
+                              fontWeight: FontWeight.w700,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () =>
+                              setState(() => _mapFocused = false),
+                          child: Text(
+                            'Show details',
+                            style: TextStyle(
+                              color: palette.accent,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ] else ...[
+                  const Gap(8),
+                  Center(
+                    child: TextButton.icon(
+                      onPressed: () {
+                        setState(() => _mapFocused = true);
+                      },
+                      icon: Icon(Icons.map_rounded,
+                          size: 16, color: palette.accent),
+                      label: Text(
+                        'See whole map',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: palette.accent,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const Gap(6),
                   Row(
                     children: [
-                      const Icon(Icons.schedule_rounded,
+                      Icon(Icons.schedule_rounded,
                           size: 20, color: AppColors.helperAccent),
                       const Gap(8),
                       Expanded(
@@ -589,6 +731,7 @@ class _LiveTrackingScaffold extends StatelessWidget {
                           _etaLabel,
                           style: AppTextStyles.headingSmall.copyWith(
                             fontSize: 16,
+                            color: palette.textPrimary,
                           ),
                         ),
                       ),
@@ -599,14 +742,14 @@ class _LiveTrackingScaffold extends StatelessWidget {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.location_on_rounded,
-                          size: 18, color: AppColors.textMuted),
+                      Icon(Icons.location_on_rounded,
+                          size: 18, color: palette.textMuted),
                       const Gap(6),
                       Expanded(
                         child: Text(
                           _address,
                           style: AppTextStyles.bodyMedium.copyWith(
-                            color: AppColors.textSecondary,
+                            color: palette.textSecondary,
                             fontSize: 13,
                           ),
                         ),
@@ -623,6 +766,7 @@ class _LiveTrackingScaffold extends StatelessWidget {
                           task.title,
                           style: AppTextStyles.bodySmall.copyWith(
                             fontWeight: FontWeight.w600,
+                            color: palette.textPrimary,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -638,20 +782,23 @@ class _LiveTrackingScaffold extends StatelessWidget {
                     ],
                   ),
                   const Gap(14),
-                  const Divider(height: 1),
+                  Divider(height: 1, color: palette.border),
                   const Gap(14),
                   Row(
                     children: [
                       CircleAvatar(
                         radius: 22,
-                        backgroundColor: AppColors.brandGreenSoft,
+                        backgroundColor: isDark
+                            ? palette.accent.withValues(alpha: 0.22)
+                            : AppColors.brandGreenSoft,
                         child: Text(
                           _helperName.isNotEmpty
                               ? _helperName[0].toUpperCase()
                               : '?',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontWeight: FontWeight.w800,
                             fontSize: 16,
+                            color: palette.textPrimary,
                           ),
                         ),
                       ),
@@ -662,23 +809,31 @@ class _LiveTrackingScaffold extends StatelessWidget {
                           children: [
                             Text(
                               _helperName,
-                              style: AppTextStyles.headingSmall
-                                  .copyWith(fontSize: 14),
+                              style: AppTextStyles.headingSmall.copyWith(
+                                fontSize: 14,
+                                color: palette.textPrimary,
+                              ),
                             ),
                             Text(
                               'Helper',
                               style: AppTextStyles.bodySmall.copyWith(
-                                color: AppColors.textMuted,
+                                color: palette.textMuted,
                                 fontSize: 11,
                               ),
                             ),
                           ],
                         ),
                       ),
-                      _RoundAction(
-                        icon: Icons.chat_bubble_rounded,
-                        color: AppColors.helperAccent,
-                        onTap: onChat,
+                      ChatUnreadPoller(
+                        taskId: task.id,
+                        builder: (context, unread) => ChatUnreadBadge(
+                          count: unread,
+                          child: _RoundAction(
+                            icon: Icons.chat_bubble_rounded,
+                            color: AppColors.helperAccent,
+                            onTap: onChat,
+                          ),
+                        ),
                       ),
                       const Gap(8),
                       _RoundAction(
@@ -689,7 +844,8 @@ class _LiveTrackingScaffold extends StatelessWidget {
                       const Gap(8),
                       _RoundAction(
                         icon: Icons.gavel_rounded,
-                        color: Colors.black87,
+                        // Uber blue in dark so Trust never blends into black.
+                        color: isDark ? palette.accent : Colors.black87,
                         onTap: onTrust,
                       ),
                       const Gap(8),
@@ -712,15 +868,19 @@ class _LiveTrackingScaffold extends StatelessWidget {
                     child: ExpansionTile(
                       tilePadding: EdgeInsets.zero,
                       childrenPadding: EdgeInsets.zero,
+                      iconColor: palette.textMuted,
+                      collapsedIconColor: palette.textMuted,
                       title: Text(
                         'Why this match',
                         style: AppTextStyles.bodySmall.copyWith(
                           fontWeight: FontWeight.w700,
+                          color: palette.textPrimary,
                         ),
                       ),
                       children: [explainCard],
                     ),
                   ),
+                  ],
                 ],
               ),
             ).animate().slideY(begin: 0.12, duration: 320.ms, curve: Curves.easeOutCubic),
@@ -768,6 +928,7 @@ class _ClientProofStrip extends StatelessWidget {
                       : 'Waiting for helper completion proof',
                   style: AppTextStyles.bodySmall.copyWith(
                     fontWeight: FontWeight.w700,
+                    color: ZivoPalette.of(context).textPrimary,
                   ),
                 ),
               ),
@@ -808,7 +969,7 @@ class _ClientProofStrip extends StatelessWidget {
                     errorBuilder: (_, __, ___) => Container(
                       width: 56,
                       height: 56,
-                      color: AppColors.borderColor,
+                      color: ZivoPalette.of(context).border,
                       child: const Icon(Icons.image_outlined, size: 18),
                     ),
                   ),
@@ -908,12 +1069,15 @@ class _LiveOtpStripState extends State<_LiveOtpStrip> {
       return const SizedBox.shrink();
     }
 
+    final palette = ZivoPalette.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: AppColors.surfaceDark,
+        color: isDark ? const Color(0xFF111111) : palette.surface,
         borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: palette.border),
       ),
       child: Column(
         children: [
@@ -923,7 +1087,7 @@ class _LiveOtpStripState extends State<_LiveOtpStrip> {
                 phase,
                 style: AppTextStyles.bodySmall.copyWith(
                   fontWeight: FontWeight.w600,
-                  color: AppColors.textMuted,
+                  color: palette.textSecondary,
                 ),
               ),
               const Spacer(),
@@ -932,6 +1096,7 @@ class _LiveOtpStripState extends State<_LiveOtpStrip> {
                 style: AppTextStyles.headingSmall.copyWith(
                   letterSpacing: 3,
                   fontSize: 20,
+                  color: palette.textPrimary,
                 ),
               ),
             ],
@@ -957,7 +1122,8 @@ class _LiveOtpStripState extends State<_LiveOtpStrip> {
                     : 'Send Start OTP in chat',
               ),
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.helperAccent,
+                backgroundColor:
+                    isDark ? palette.accent : AppColors.helperAccent,
                 foregroundColor: Colors.white,
                 elevation: 0,
               ),
@@ -967,147 +1133,6 @@ class _LiveOtpStripState extends State<_LiveOtpStrip> {
       ),
     );
   }
-}
-
-/// Lightweight map illustration — no Maps API key required.
-class _SimpleTrackMap extends StatelessWidget {
-  const _SimpleTrackMap({
-    required this.destinationLabel,
-    required this.inProgress,
-  });
-
-  final String destinationLabel;
-  final bool inProgress;
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      painter: _TrackMapPainter(inProgress: inProgress),
-      child: Stack(
-        children: [
-          // Soft grid / park blocks
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    const Color(0xFFDCE8DF),
-                    const Color(0xFFEAF2EC),
-                    const Color(0xFFD5E4DA),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          CustomPaint(
-            size: Size.infinite,
-            painter: _TrackMapPainter(inProgress: inProgress),
-          ),
-          // Destination pin
-          const Align(
-            alignment: Alignment(0.35, -0.15),
-            child: _MapPin(
-              icon: Icons.home_rounded,
-              color: AppColors.helperAccent,
-            ),
-          ),
-          // Helper pin
-          Align(
-            alignment: inProgress
-                ? const Alignment(0.05, 0.05)
-                : const Alignment(-0.45, 0.35),
-            child: const _MapPin(
-              icon: Icons.directions_walk_rounded,
-              color: Color(0xFF1B8A4A),
-            ),
-          ),
-          Positioned(
-            right: 16,
-            bottom: MediaQuery.sizeOf(context).height * 0.42,
-            child: Material(
-              color: Colors.white,
-              shape: const CircleBorder(),
-              elevation: 3,
-              child: IconButton(
-                tooltip: 'Center',
-                onPressed: () {},
-                icon: const Icon(Icons.my_location_rounded, size: 20),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MapPin extends StatelessWidget {
-  const _MapPin({required this.icon, required this.color});
-  final IconData icon;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 48,
-      height: 48,
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: color.withValues(alpha: 0.35),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-        border: Border.all(color: Colors.white, width: 3),
-      ),
-      child: Icon(icon, color: Colors.white, size: 22),
-    );
-  }
-}
-
-class _TrackMapPainter extends CustomPainter {
-  _TrackMapPainter({required this.inProgress});
-  final bool inProgress;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final road = Paint()
-      ..color = Colors.white.withValues(alpha: 0.85)
-      ..strokeWidth = 10
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-    final route = Paint()
-      ..color = const Color(0xFF1B8A4A)
-      ..strokeWidth = 5
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-
-    // Fake street grid
-    for (var i = 1; i < 6; i++) {
-      final y = size.height * (i / 7);
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), road);
-      final x = size.width * (i / 6);
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), road);
-    }
-
-    final start = Offset(size.width * 0.22, size.height * 0.62);
-    final mid = Offset(size.width * 0.48, size.height * 0.48);
-    final end = Offset(size.width * 0.68, size.height * 0.38);
-    final path = Path()
-      ..moveTo(start.dx, start.dy)
-      ..quadraticBezierTo(mid.dx, mid.dy + 40, mid.dx, mid.dy)
-      ..quadraticBezierTo(end.dx - 20, end.dy + 30, end.dx, end.dy);
-    canvas.drawPath(path, route);
-  }
-
-  @override
-  bool shouldRepaint(covariant _TrackMapPainter oldDelegate) =>
-      oldDelegate.inProgress != inProgress;
 }
 
 class _OpenTaskCard extends StatelessWidget {
@@ -1121,7 +1146,7 @@ class _OpenTaskCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.borderColor),
+        border: Border.all(color: ZivoPalette.of(context).border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1140,7 +1165,7 @@ class _OpenTaskCard extends StatelessWidget {
           Text(
             task.locationLabel ?? task.locationAddress ?? 'Nearby',
             style: AppTextStyles.bodySmall.copyWith(
-              color: AppColors.textMuted,
+              color: ZivoPalette.of(context).textMuted,
             ),
           ),
           const Gap(6),

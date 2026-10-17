@@ -5,8 +5,10 @@ import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
 import 'package:hyperlocal/blocs/mode/mode_cubit.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
+import 'package:hyperlocal/core/constants/zivo_palette.dart';
 import 'package:hyperlocal/core/router/app_router.dart';
 import 'package:hyperlocal/core/utils/auth_gate.dart';
+import 'package:hyperlocal/core/l10n/locale_cubit.dart';
 
 /// A compact animated toggle button placed in the navigation bar that switches
 /// between Client Mode and Helper Mode.
@@ -20,14 +22,19 @@ class ModeToggleWidget extends StatelessWidget {
       builder: (context, state) {
         final isToggling = state is ModeToggling;
 
+        final l = context.watch<LocaleCubit>();
+        final palette = ZivoPalette.of(context);
+        final switchLabel = isHelper
+            ? l.t('nav.switchClient')
+            : l.t('nav.switchHelper');
         return Semantics(
           button: true,
           enabled: !isToggling,
-          label: isHelper ? 'Switch to Client mode' : 'Switch to Helper mode',
+          label: switchLabel,
           child: Tooltip(
-            message: isHelper ? 'Switch to Client mode' : 'Switch to Helper mode',
+            message: switchLabel,
             child: Material(
-              color: AppColors.helperAccent,
+              color: palette.accent,
               borderRadius: BorderRadius.circular(22),
               clipBehavior: Clip.antiAlias,
               child: InkWell(
@@ -54,19 +61,28 @@ class ModeToggleWidget extends StatelessWidget {
                             ? Icons.person_search_rounded
                             : Icons.handshake_rounded,
                         color: Colors.white,
-                        size: 20,
+                        size: 18,
                       ),
                       const SizedBox(height: 2),
-                      Text(
-                        isHelper ? 'Client' : 'Helper',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontFamily: 'Inter',
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                          letterSpacing: 0,
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            isHelper ? l.t('home.client') : l.t('home.helper'),
+                            maxLines: 1,
+                            softWrap: false,
+                            overflow: TextOverflow.visible,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontFamily: 'Inter',
+                              fontSize: 9,
+                              height: 1.0,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                              letterSpacing: 0,
+                            ),
+                          ),
                         ),
                       ),
                     ],
@@ -218,9 +234,7 @@ class ModeToggleWidget extends StatelessWidget {
                       }
                     },
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: modeState is ClientMode
-                          ? AppColors.helperAccent
-                          : AppColors.accent,
+                      backgroundColor: ZivoPalette.of(context).accent,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(

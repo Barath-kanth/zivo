@@ -5,13 +5,14 @@ import 'package:go_router/go_router.dart';
 import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
 import 'package:hyperlocal/blocs/a11y/a11y_cubit.dart';
 import 'package:hyperlocal/blocs/mode/mode_cubit.dart';
+import 'package:hyperlocal/blocs/theme/theme_cubit.dart';
 import 'package:hyperlocal/core/constants/app_brand.dart';
-import 'package:hyperlocal/ui/_shared/a11y_widgets.dart';
 import 'package:hyperlocal/ui/_shared/task_bundle_sheet.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
 import 'package:hyperlocal/core/constants/app_config.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/constants/community_guidelines.dart';
+import 'package:hyperlocal/core/constants/zivo_palette.dart';
 import 'package:hyperlocal/core/router/app_router.dart';
 import 'package:hyperlocal/core/services/device_account_store.dart';
 import 'package:hyperlocal/core/utils/auth_gate.dart';
@@ -22,6 +23,10 @@ import 'package:hyperlocal/data/models/user_profile.dart';
 import 'package:hyperlocal/data/models/user_review.dart';
 import 'package:hyperlocal/data/repositories/trust_repository.dart';
 import 'package:hyperlocal/ui/_shared/zivo_logo.dart';
+import 'package:hyperlocal/core/l10n/app_strings.dart';
+import 'package:hyperlocal/core/l10n/locale_cubit.dart';
+import 'package:hyperlocal/ui/_shared/a11y_hub.dart';
+import 'package:hyperlocal/ui/_shared/mode_switch_card.dart';
 
 /// Uber Rider-home style Account panel with close (X) back to home.
 class AccountScreen extends StatefulWidget {
@@ -89,9 +94,10 @@ class _AccountScreenState extends State<AccountScreen> {
           _activeProfileId ??= state.profile.id;
           final p = state.profile;
           final isHelper = context.watch<ModeCubit>().isHelperMode;
+          final palette = ZivoPalette.of(context);
 
           return Scaffold(
-            backgroundColor: AppColors.backgroundDark,
+            backgroundColor: palette.canvas,
             body: SafeArea(
               child: Column(
                 children: [
@@ -105,20 +111,21 @@ class _AccountScreenState extends State<AccountScreen> {
                         ),
                         Expanded(
                           child: Text(
-                            'Account',
+                            context.watch<LocaleCubit>().t('account.title'),
                             textAlign: TextAlign.center,
                             style: AppTextStyles.headingMedium.copyWith(
                               fontWeight: FontWeight.w700,
+                              color: palette.textPrimary,
                             ),
                           ),
                         ),
                         IconButton(
-                          tooltip: 'Close',
+                          tooltip: context.watch<LocaleCubit>().t('common.close'),
                           onPressed: _close,
                           icon: const Icon(Icons.close, size: 26),
                           style: IconButton.styleFrom(
-                            backgroundColor: Colors.white,
-                            foregroundColor: Colors.black,
+                            backgroundColor: palette.card,
+                            foregroundColor: palette.textPrimary,
                           ),
                         ),
                       ],
@@ -128,9 +135,19 @@ class _AccountScreenState extends State<AccountScreen> {
                     child: RefreshIndicator(
                       onRefresh: _load,
                       child: ListView(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
+                        padding: EdgeInsets.fromLTRB(
+                          16,
+                          8,
+                          16,
+                          28 + MediaQuery.paddingOf(context).bottom + 80,
+                        ),
                         children: [
                           _profileCard(p),
+                          const Gap(14),
+                          // Mode switch near top so mobile users always find it.
+                          const ModeSwitchCard(),
+                          const Gap(14),
+                          _appearanceCard(),
                           const Gap(14),
                           _verificationCard(p),
                           const Gap(14),
@@ -142,7 +159,7 @@ class _AccountScreenState extends State<AccountScreen> {
                           const Gap(14),
                           _a11yCard(),
                           const Gap(14),
-                          _menuCard(p, isHelper),
+                          _menuCard(p),
                           const Gap(14),
                           _signOutButton(),
                           const Gap(16),
@@ -150,7 +167,7 @@ class _AccountScreenState extends State<AccountScreen> {
                             '${AppBrand.name} · Sri Lanka · Guidelines ${CommunityGuidelines.currentVersion}',
                             textAlign: TextAlign.center,
                             style: AppTextStyles.bodySmall.copyWith(
-                              color: AppColors.textMuted,
+                              color: palette.textMuted,
                               fontSize: 11,
                             ),
                           ),
@@ -168,8 +185,9 @@ class _AccountScreenState extends State<AccountScreen> {
   }
 
   Widget _multiAccountCard(UserProfile current) {
+    final palette = ZivoPalette.of(context);
     return Material(
-      color: Colors.white,
+      color: palette.card,
       borderRadius: BorderRadius.circular(16),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
@@ -178,12 +196,13 @@ class _AccountScreenState extends State<AccountScreen> {
           children: [
             Row(
               children: [
-                const Icon(Icons.people_outline, size: 22),
+                Icon(Icons.people_outline, size: 22, color: palette.textPrimary),
                 const Gap(8),
                 Text(
                   'Accounts on this phone',
                   style: AppTextStyles.headingSmall.copyWith(
                     fontWeight: FontWeight.w700,
+                    color: palette.textPrimary,
                   ),
                 ),
               ],
@@ -194,7 +213,7 @@ class _AccountScreenState extends State<AccountScreen> {
                   ? 'Share one handset with family — create a profile for someone without a smartphone.'
                   : 'Switch between accounts signed in on this device.',
               style: AppTextStyles.bodySmall.copyWith(
-                color: AppColors.textMuted,
+                color: palette.textMuted,
               ),
             ),
             const Gap(12),
@@ -205,7 +224,7 @@ class _AccountScreenState extends State<AccountScreen> {
                 child: Material(
                   color: active
                       ? AppColors.helperAccent.withValues(alpha: 0.08)
-                      : AppColors.backgroundDark,
+                      : palette.surface,
                   borderRadius: BorderRadius.circular(12),
                   child: ListTile(
                     onTap: active
@@ -216,8 +235,8 @@ class _AccountScreenState extends State<AccountScreen> {
                     contentPadding:
                         const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
                     leading: CircleAvatar(
-                      backgroundColor: Colors.black,
-                      foregroundColor: Colors.white,
+                      backgroundColor: palette.accent,
+                      foregroundColor: palette.onAccent,
                       child: Text(
                         a.initial,
                         style: const TextStyle(fontWeight: FontWeight.w700),
@@ -227,13 +246,16 @@ class _AccountScreenState extends State<AccountScreen> {
                       a.fullName,
                       style: AppTextStyles.bodyLarge.copyWith(
                         fontWeight: FontWeight.w600,
+                        color: palette.textPrimary,
                       ),
                     ),
                     subtitle: Text(
                       active
                           ? 'Active · ${a.phone}'
                           : (a.phone.isEmpty ? 'Tap to switch' : a.phone),
-                      style: AppTextStyles.bodySmall,
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: palette.textSecondary,
+                      ),
                     ),
                     trailing: active
                         ? const Icon(Icons.check_circle,
@@ -259,10 +281,10 @@ class _AccountScreenState extends State<AccountScreen> {
                       context.go(AppRoutes.login);
                     },
                     icon: const Icon(Icons.login, size: 18),
-                    label: const Text('Add account'),
+                    label: Text(context.watch<LocaleCubit>().t('account.addAccount')),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.black,
-                      side: const BorderSide(color: Color(0xFFE0E0E0)),
+                      foregroundColor: palette.textPrimary,
+                      side: BorderSide(color: palette.border),
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -278,8 +300,8 @@ class _AccountScreenState extends State<AccountScreen> {
                       icon: const Icon(Icons.person_add_alt_1, size: 18),
                       label: const Text('New profile'),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.black,
-                        foregroundColor: Colors.white,
+                        backgroundColor: palette.accent,
+                        foregroundColor: palette.onAccent,
                         elevation: 0,
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(
@@ -294,6 +316,86 @@ class _AccountScreenState extends State<AccountScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _appearanceCard() {
+    return BlocBuilder<ThemeCubit, ThemeMode>(
+      builder: (context, mode) {
+        final palette = ZivoPalette.of(context);
+        final cubit = context.read<ThemeCubit>();
+        return Material(
+          color: palette.card,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.brightness_6_rounded,
+                      size: 22,
+                      color: palette.textPrimary,
+                    ),
+                    const Gap(8),
+                    Text(
+                      'Appearance',
+                      style: AppTextStyles.headingSmall.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: palette.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+                const Gap(6),
+                Text(
+                  'Light is the default. Dark uses Uber black (#000) with blue accents.',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: palette.textMuted,
+                    height: 1.35,
+                  ),
+                ),
+                const Gap(12),
+                SegmentedButton<ThemeMode>(
+                  segments: const [
+                    ButtonSegment(
+                      value: ThemeMode.light,
+                      label: Text('Light'),
+                      icon: Icon(Icons.light_mode_rounded, size: 16),
+                    ),
+                    ButtonSegment(
+                      value: ThemeMode.dark,
+                      label: Text('Dark'),
+                      icon: Icon(Icons.dark_mode_rounded, size: 16),
+                    ),
+                    ButtonSegment(
+                      value: ThemeMode.system,
+                      label: Text('System'),
+                      icon: Icon(Icons.phonelink_setup_rounded, size: 16),
+                    ),
+                  ],
+                  selected: {mode},
+                  onSelectionChanged: (set) {
+                    if (set.isEmpty) return;
+                    cubit.setMode(set.first);
+                  },
+                  style: ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                    textStyle: WidgetStatePropertyAll(
+                      AppTextStyles.labelLarge.copyWith(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -361,12 +463,14 @@ class _AccountScreenState extends State<AccountScreen> {
     final initial = p.displayInitial;
     final rating = p.ratingAsHelper;
     final title = p.displayLabel;
+    final palette = ZivoPalette.of(context);
 
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 20, 16, 20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: palette.card,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: palette.border),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.025),
@@ -388,6 +492,7 @@ class _AccountScreenState extends State<AccountScreen> {
                     fontSize: 28,
                     fontWeight: FontWeight.w700,
                     letterSpacing: -0.8,
+                    color: palette.textPrimary,
                   ),
                 ),
                 if (p.phone != null && !p.hasPlaceholderName) ...[
@@ -395,19 +500,20 @@ class _AccountScreenState extends State<AccountScreen> {
                   Text(
                     PhoneUtils.formatDisplay(p.phone!),
                     style: AppTextStyles.bodySmall.copyWith(
-                      color: AppColors.textMuted,
+                      color: palette.textMuted,
                     ),
                   ),
                 ],
                 const Gap(8),
                 Row(
                   children: [
-                    const Icon(Icons.star, size: 18, color: Colors.black),
+                    Icon(Icons.star, size: 18, color: palette.textPrimary),
                     const Gap(4),
                     Text(
                       rating.toStringAsFixed(2),
                       style: AppTextStyles.bodyLarge.copyWith(
                         fontWeight: FontWeight.w600,
+                        color: palette.textPrimary,
                       ),
                     ),
                     const Gap(10),
@@ -444,7 +550,7 @@ class _AccountScreenState extends State<AccountScreen> {
                   '${p.totalTasksHelped} helped · ${p.totalTasksPosted} posted'
                   '${_quals.isNotEmpty ? ' · ${_quals.where((q) => q.isVerified).length} quals' : ''}',
                   style: AppTextStyles.bodySmall.copyWith(
-                    color: AppColors.textMuted,
+                    color: palette.textMuted,
                   ),
                 ),
               ],
@@ -455,7 +561,7 @@ class _AccountScreenState extends State<AccountScreen> {
             onTap: () => context.push(AppRoutes.onboarding),
             child: CircleAvatar(
               radius: 36,
-              backgroundColor: const Color(0xFFE8E8E8),
+              backgroundColor: palette.surface,
               backgroundImage: (p.avatarUrl != null &&
                       p.avatarUrl!.startsWith('http'))
                   ? NetworkImage(p.avatarUrl!)
@@ -464,10 +570,10 @@ class _AccountScreenState extends State<AccountScreen> {
                   ? null
                   : Text(
                       initial,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 28,
                         fontWeight: FontWeight.w700,
-                        color: Colors.black87,
+                        color: palette.textPrimary,
                       ),
                     ),
             ),
@@ -479,8 +585,9 @@ class _AccountScreenState extends State<AccountScreen> {
 
   Widget _familyAssistCard(UserProfile current) {
     final others = _deviceAccounts.where((a) => a.id != current.id).toList();
+    final palette = ZivoPalette.of(context);
     return Material(
-      color: Colors.white,
+      color: palette.card,
       borderRadius: BorderRadius.circular(16),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
@@ -489,29 +596,33 @@ class _AccountScreenState extends State<AccountScreen> {
           children: [
             Row(
               children: [
-                const Icon(Icons.family_restroom_outlined, size: 22),
+                Icon(Icons.family_restroom_outlined,
+                    size: 22, color: palette.textPrimary),
                 const Gap(8),
                 Text(
-                  'Family Assist',
+                  context.watch<LocaleCubit>().t('account.family'),
                   style: AppTextStyles.headingSmall.copyWith(
                     fontWeight: FontWeight.w700,
+                    color: palette.textPrimary,
                   ),
                 ),
               ],
             ),
             const Gap(6),
             Text(
-              'Book help for a parent or relative, then share a live link so family can see when a helper is coming — without OTP codes.',
+              context.watch<LocaleCubit>().t('account.familyBody'),
               style: AppTextStyles.bodySmall.copyWith(
-                color: AppColors.textMuted,
+                color: palette.textMuted,
                 height: 1.35,
               ),
             ),
             const Gap(12),
             if (others.isEmpty)
               Text(
-                'Add another profile on this phone first (Accounts above), then book for them here.',
-                style: AppTextStyles.bodySmall,
+                context.watch<LocaleCubit>().t('account.familyHint'),
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: palette.textSecondary,
+                ),
               )
             else
               ...others.map(
@@ -528,7 +639,7 @@ class _AccountScreenState extends State<AccountScreen> {
                     icon: const Icon(Icons.event_available_outlined, size: 18),
                     label: Text('Book for ${a.fullName}'),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.black,
+                      foregroundColor: palette.textPrimary,
                       minimumSize: const Size.fromHeight(44),
                     ),
                   ),
@@ -541,7 +652,7 @@ class _AccountScreenState extends State<AccountScreen> {
                     'Moving / packing / cleaning this weekend for my family',
               ),
               icon: const Icon(Icons.layers_outlined, size: 18),
-              label: const Text('Split one problem into several tasks'),
+              label: Text(context.watch<LocaleCubit>().t('account.split')),
             ),
           ],
         ),
@@ -552,11 +663,15 @@ class _AccountScreenState extends State<AccountScreen> {
   Widget _a11yCard() {
     return BlocBuilder<A11yCubit, bool>(
       builder: (context, on) {
+        final l = context.watch<LocaleCubit>();
+        final palette = ZivoPalette.of(context);
         return Material(
-          color: Colors.white,
+          color: palette.card,
           borderRadius: BorderRadius.circular(16),
+          // Don't clip Arabic / CJK chip glyphs on the last Wrap row.
+          clipBehavior: Clip.none,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+            padding: const EdgeInsets.fromLTRB(16, 12, 12, 16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -565,30 +680,71 @@ class _AccountScreenState extends State<AccountScreen> {
                   value: on,
                   onChanged: (v) => context.read<A11yCubit>().setEnabled(v),
                   title: Text(
-                    'Accessibility Mode',
+                    l.t('account.a11y'),
                     style: AppTextStyles.headingSmall.copyWith(
                       fontWeight: FontWeight.w700,
+                      color: palette.textPrimary,
                     ),
                   ),
                   subtitle: Text(
-                    'Opt-in. When on, use the Access button (mobile) or Accessibility in the sidebar (desktop) for Speak & Describe — no top banner.',
+                    l.t('account.a11yBody'),
                     style: AppTextStyles.bodySmall.copyWith(
-                      color: AppColors.textMuted,
+                      color: palette.textMuted,
                       height: 1.35,
                     ),
                   ),
                   activeThumbColor: Colors.white,
                   activeTrackColor: AppColors.helperAccent,
                 ),
+                const Gap(10),
+                Text(
+                  l.t('account.language'),
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: palette.textPrimary,
+                  ),
+                ),
+                const Gap(10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 10,
+                  children: [
+                    for (final code in AppStrings.supported)
+                      ChoiceChip(
+                        label: Text(
+                          l.t('lang.$code'),
+                          style: TextStyle(
+                            fontSize: 13,
+                            height: 1.25,
+                            fontWeight: FontWeight.w600,
+                            color: palette.textPrimary,
+                          ),
+                        ),
+                        labelPadding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 6,
+                        ),
+                        visualDensity: VisualDensity.standard,
+                        materialTapTargetSize: MaterialTapTargetSize.padded,
+                        selected: l.code == code,
+                        onSelected: (_) =>
+                            context.read<LocaleCubit>().setLocale(code),
+                      ),
+                  ],
+                ),
                 if (on) ...[
-                  const Gap(4),
+                  const Gap(8),
                   TextButton.icon(
-                    onPressed: () => showA11yDescribeSheet(
+                    onPressed: () => showA11yHub(
                       context,
-                      hint: 'Zivo Account screen — accessibility settings',
+                      screenHint: 'Zivo Account screen',
                     ),
-                    icon: const Icon(Icons.visibility_outlined, size: 18),
-                    label: const Text('Describe this screen'),
+                    icon: const Icon(Icons.accessibility_new_rounded, size: 18),
+                    label: Text(l.t('a11y.title')),
                   ),
                 ],
               ],
@@ -632,8 +788,9 @@ class _AccountScreenState extends State<AccountScreen> {
       cta = 'Submit documents';
     }
 
+    final palette = ZivoPalette.of(context);
     return Material(
-      color: Colors.white,
+      color: palette.card,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
@@ -666,13 +823,14 @@ class _AccountScreenState extends State<AccountScreen> {
                       headline,
                       style: AppTextStyles.headingSmall.copyWith(
                         fontWeight: FontWeight.w700,
+                        color: palette.textPrimary,
                       ),
                     ),
                     const Gap(4),
                     Text(
                       body,
                       style: AppTextStyles.bodySmall.copyWith(
-                        color: AppColors.textMuted,
+                        color: palette.textMuted,
                       ),
                     ),
                     const Gap(10),
@@ -680,13 +838,13 @@ class _AccountScreenState extends State<AccountScreen> {
                       cta,
                       style: AppTextStyles.bodyMedium.copyWith(
                         fontWeight: FontWeight.w700,
-                        color: Colors.black,
+                        color: palette.textPrimary,
                       ),
                     ),
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right, color: Colors.black54),
+              Icon(Icons.chevron_right, color: palette.textMuted),
             ],
           ),
         ),
@@ -729,8 +887,9 @@ class _AccountScreenState extends State<AccountScreen> {
     required String label,
     required VoidCallback onTap,
   }) {
+    final palette = ZivoPalette.of(context);
     return Material(
-      color: Colors.white,
+      color: palette.card,
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: onTap,
@@ -739,6 +898,7 @@ class _AccountScreenState extends State<AccountScreen> {
           padding: const EdgeInsets.symmetric(vertical: 18),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: palette.border),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.04),
@@ -749,12 +909,13 @@ class _AccountScreenState extends State<AccountScreen> {
           ),
           child: Column(
             children: [
-              Icon(icon, size: 26, color: Colors.black),
+              Icon(icon, size: 26, color: palette.textPrimary),
               const Gap(8),
               Text(
                 label,
                 style: AppTextStyles.bodyMedium.copyWith(
                   fontWeight: FontWeight.w600,
+                  color: palette.textPrimary,
                 ),
               ),
             ],
@@ -764,21 +925,22 @@ class _AccountScreenState extends State<AccountScreen> {
     );
   }
 
-  Widget _menuCard(UserProfile p, bool isHelper) {
+  Widget _menuCard(UserProfile p) {
+    final palette = ZivoPalette.of(context);
     return Material(
-      color: Colors.white,
+      color: palette.card,
       borderRadius: BorderRadius.circular(16),
       child: Column(
         children: [
           _menuRow(
             Icons.person_outline,
-            'Manage account',
+            context.watch<LocaleCubit>().t('account.manage'),
             () => context.push(AppRoutes.settings),
           ),
           _divider(),
           _menuRow(
             Icons.admin_panel_settings_outlined,
-            'Admin Dashboard',
+            context.watch<LocaleCubit>().t('account.admin'),
             () => context.push(AppRoutes.admin),
           ),
           _divider(),
@@ -794,19 +956,6 @@ class _AccountScreenState extends State<AccountScreen> {
               }
               if (!context.mounted) return;
               context.push(AppRoutes.createTask);
-            },
-          ),
-          _divider(),
-          _menuRow(
-            Icons.handshake_outlined,
-            isHelper ? 'Helper job feed' : 'Switch to Helper mode',
-            () {
-              if (isHelper) {
-                context.go(AppRoutes.shell);
-              } else {
-                context.read<ModeCubit>().toggleMode().catchError((_) {});
-                context.go(AppRoutes.shell);
-              }
             },
           ),
           _divider(),
@@ -855,26 +1004,29 @@ class _AccountScreenState extends State<AccountScreen> {
     VoidCallback onTap, {
     Color? accent,
   }) {
+    final palette = ZivoPalette.of(context);
+    final color = accent ?? palette.textPrimary;
     return ListTile(
       onTap: onTap,
       contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 2),
-      leading: Icon(icon, color: accent ?? Colors.black, size: 24),
+      leading: Icon(icon, color: color, size: 24),
       title: Text(
         title,
         style: AppTextStyles.bodyLarge.copyWith(
           fontWeight: FontWeight.w500,
-          color: accent ?? Colors.black,
+          color: color,
         ),
       ),
-      trailing: const Icon(Icons.chevron_right, color: AppColors.textMuted),
+      trailing: Icon(Icons.chevron_right, color: palette.textMuted),
     );
   }
 
   Widget _signOutButton() {
+    final palette = ZivoPalette.of(context);
     return SizedBox(
       width: double.infinity,
       child: Material(
-        color: const Color(0xFFEEEEEE),
+        color: palette.surface,
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
           onTap: () => _confirmSignOut(context),

@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Zivo — Google AI Builder Cup 2026 proposal</title>
+<style>
+  @page { size: 1280px 720px; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #0f172a; }
+  .slide { width: 1280px; height: 720px; padding: 52px 64px; page-break-after: always; position: relative; overflow: hidden; background: #fff; }
+  .slide:last-child { page-break-after: auto; }
+  .bar { position: absolute; left: 0; top: 0; width: 14px; height: 720px; background: linear-gradient(#4285f4, #34a853, #fbbc04, #ea4335); }
+  h1 { font-size: 54px; margin: 0 0 8px; letter-spacing: -1px; }
+  h2 { font-size: 38px; margin: 0 0 22px; letter-spacing: -0.5px; }
+  h3 { font-size: 22px; margin: 0 0 6px; }
+  p, li { font-size: 21px; line-height: 1.42; margin: 0 0 10px; }
+  ul { margin: 0; padding-left: 26px; }
+  .muted { color: #475569; }
+  .tag { display: inline-block; background: #e8f0fe; color: #1a56db; border-radius: 999px; padding: 4px 14px; font-size: 17px; font-weight: 700; margin-right: 8px; }
+  .grid { display: grid; gap: 18px; }
+  .g2 { grid-template-columns: 1fr 1fr; }
+  .g3 { grid-template-columns: 1fr 1fr 1fr; }
+  .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; padding: 18px 20px; }
+  .card p, .card li { font-size: 18px; margin-bottom: 6px; }
+  table { border-collapse: collapse; width: 100%; font-size: 17px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+  th { background: #f1f5f9; font-size: 15px; text-transform: uppercase; letter-spacing: .04em; color: #475569; }
+  .big { font-size: 64px; font-weight: 800; letter-spacing: -2px; }
+  .warn { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 14px; padding: 12px 16px; font-size: 17px; }
+  .foot { position: absolute; bottom: 20px; left: 64px; right: 64px; font-size: 14px; color: #64748b; display: flex; justify-content: space-between; }
+  img { max-width: 100%; }
+  .flow { display:flex; align-items:stretch; gap:10px; margin-top:8px; }
+  .step { flex:1; background:#f8fafc; border:1px solid #cbd5e1; border-radius:14px; padding:12px 12px; font-size:15.5px; line-height:1.3; position:relative; }
+  .step b { display:block; font-size:16.5px; margin-bottom:4px; }
+  .step.ai { background:#e8f0fe; border-color:#93b4f5; }
+  .step.money { background:#ecfdf3; border-color:#86d6a4; }
+  .arrow { align-self:center; font-size:24px; color:#64748b; }
+  .lane { font-size:14px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:#475569; margin:14px 0 2px; }
+  .shots { display:flex; gap:16px; justify-content:center; }
+  .shots figure { margin:0; text-align:center; font-size:14px; color:#475569; }
+  .shots img { height:520px; border:1px solid #cbd5e1; border-radius:18px; box-shadow:0 6px 18px rgba(15,23,42,.12); }
+  code { background: #f1f5f9; padding: 1px 6px; border-radius: 6px; font-size: .9em; }
+</style>
+</head>
+<body>
+
+
+<!-- 1 TEAM -->
+<section class="slide"><div class="bar"></div>
+  <p class="muted" style="margin-top:20px">Google AI Builder Cup 2026 · Submission</p>
+  <h1>Team details</h1>
+  <div class="card" style="margin-top:28px;width:900px">
+    <p style="background:#FFF7E0;padding:10px 12px;border-radius:8px;border:1px solid #F0D48A"><b>a. Team name:</b> ________________________</p>
+    <p style="background:#FFF7E0;padding:10px 12px;border-radius:8px;border:1px solid #F0D48A"><b>b. Team leader name:</b> ________________________</p>
+    <p><b>c. Problem statement:</b> Sustainability &amp; Social Impact — <b>Accessibility</b> (secondary: Social Good)</p>
+    <p><b>Solution:</b> Zivo — neighbourhood care that speaks your language, and gives disabled neighbours work</p>
+    <p class="muted" style="font-size:15px;margin-top:8px">Yellow rows = fill before you export / submit.</p>
+  </div>
+  <div class="foot"><span>Zivo</span><span>1</span></div>
+</section>
+
+<!-- 2 BRIEF -->
+<section class="slide"><div class="bar"></div>
+  <h2>Brief about the idea</h2>
+  <div class="grid g2">
+    <div>
+      <p><b>Problem.</b> In Sri Lanka, elders who speak only Tamil or Sinhala, and disabled neighbours, are skipped by gig and care apps: English-only, fast typing, cash in a stranger's hand, and no trusted way to check what a request really means.</p>
+      <p><b>Idea.</b> Zivo lets people <b>ask for help by speaking</b> in their own language, and uses Gemini on Vertex AI as the trust-and-safety layer that makes strangers-helping-strangers safe.</p>
+      <p><b>The twist.</b> The same AI lets <b>blind, deaf and mobility-impaired neighbours be the helpers</b> and earn — with tools that fit how they work.</p>
+    </div>
+    <div class="card"><h3>One story</h3>
+      <p>Kamala, 74, speaks Tamil → voice → plan (≈4 s) → safety → escrow (or <b>Instant Dispatch</b> on her block) → Nuwan (<b>blind</b>) + Access note → adapted brief + <b>Zivo Eyes</b> → chat on-platform (phones blocked) → Start/End OTP. Neighbours can <b>Street Batch</b> onto the same trip for less CO₂e.</p>
+    </div>
+  </div>
+  <div class="foot"><span>Zivo · Brief</span><span>2</span></div>
+</section>
+
+<!-- 3 OPPORTUNITIES -->
+<section class="slide"><div class="bar"></div>
+  <h2>Opportunities</h2>
+  <div class="grid g3">
+    <div class="card"><h3>How is it different?</h3>
+      <ul><li>Assistive AI tools (Be My Eyes, Seeing AI, Live Transcribe) help disabled people <i>receive</i> a service. Zivo puts them <i>inside an earning marketplace</i>.</li><li>Safety is judged in <b>Tamil and Sinhala</b>, not just English keywords.</li></ul></div>
+    <div class="card"><h3>How does it solve the problem?</h3>
+      <ul><li>Voice-first request → plan in one call.</li><li>Vernacular safety gate + escrow + OTPs: no cash handoff.</li><li>Ability-aware work: opt-in disclosure, adapted briefs, camera and doorstep tools.</li></ul></div>
+    <div class="card"><h3>USP</h3>
+      <ul><li><b>Ability never changes rank, price or pay</b> — enforced in code and monitored for bias in BigQuery.</li><li>Gemini <b>recommends; people decide</b>; it can never move money.</li><li>Honest AI: "can't tell" instead of guessing expiry dates or medicine.</li></ul></div>
+  </div>
+  <p class="muted" style="margin-top:18px;font-size:17px">Context: WHO estimates ~1.3 billion people (~16 %) live with a significant disability. We do not claim sign-language translation — no Sri Lankan Sign Language model exists; we solve what Deaf helpers actually lack: understanding speech at the door.</p>
+  <div class="foot"><span>Zivo · Opportunities</span><span>3</span></div>
+</section>
+
+<!-- 4 FEATURES A — ask & trust -->
+<section class="slide"><div class="bar"></div>
+  <h2>List of features — ask, trust, match</h2>
+  <div class="grid g3">
+    <div class="card"><h3>Ask (Gemini)</h3>
+      <ul style="font-size:15px">
+        <li>Voice → plan (one call ≈4 s)</li>
+        <li>Speak → task draft</li>
+        <li>Show it → photo draft</li>
+        <li>Task plan / split / bundle escrow</li>
+        <li>Concierge (safety, price, weather, triage)</li>
+        <li>Dynamic pricing fields + fair wage floor</li>
+        <li>Access audit (entrance photo)</li>
+      </ul></div>
+    <div class="card"><h3>Trust &amp; money</h3>
+      <ul style="font-size:15px">
+        <li>Vernacular safety (ta/si/en)</li>
+        <li>Escrow + Start/End OTP</li>
+        <li>Goods budget in escrow</li>
+        <li>Dispute freeze · cancel refund</li>
+        <li>Trust arbitrator (recommend only)</li>
+        <li>Receipt vs shopping list</li>
+        <li>Chat translate + <b>phone block</b></li>
+      </ul></div>
+    <div class="card"><h3>Match &amp; neighbourhood</h3>
+      <ul style="font-size:15px">
+        <li>Helper rank + explain (ability ≠ score)</li>
+        <li><b>Instant Dispatch</b> (~0.5 km walk)</li>
+        <li><b>Street Batch</b> (~150 m, ~30% off, 180 s)</li>
+        <li>Neighbor vouch · trust tiers</li>
+        <li>Monsoon status (Open-Meteo) + triage</li>
+        <li>Family share / live board</li>
+        <li>Impact → Pub/Sub → BigQuery · CO₂e</li>
+      </ul></div>
+  </div>
+  <div class="foot"><span>Zivo · Features (1/2)</span><span>4</span></div>
+</section>
+
+<!-- 4b FEATURES B — earn -->
+<section class="slide"><div class="bar"></div>
+  <h2>List of features — earn with ability tools</h2>
+  <div class="grid g2">
+    <div class="card"><h3>For disabled helpers who earn</h3>
+      <ul>
+        <li><b>Ability profile</b> (blind, deaf, speech, mobility, reading) — opt-in disclosure + Access note</li>
+        <li><b>Ability fit</b> (advisory table) + <b>adapted job brief</b> naming the right tool</li>
+        <li><b>Remote / seated jobs</b>: phone check-in, reading aloud, tutoring, sighted assist</li>
+        <li><b>Zivo Eyes</b>: describe / read / match shopping list — never guesses medicine</li>
+        <li><b>Sighted-assist</b> when Eyes says “can’t tell”</li>
+        <li><b>Doorstep Talk</b> · <b>Say-it</b> (Cloud TTS) · <b>Easy-read</b> · scene describe · a11y transcribe</li>
+        <li>Large text · Speak · en/si/ta · fairness monitor (<code>access_fairness</code>)</li>
+      </ul></div>
+    <div class="card"><h3>GCP stack (what we actually use)</h3>
+      <ul>
+        <li><b>AI:</b> Vertex Gemini 2.5 Flash + Flash-Lite · multi-region failover · Cloud STT (Chirp) · Cloud TTS</li>
+        <li><b>Platform:</b> Cloud Run · Firestore · Cloud Storage (signed URLs) · Pub/Sub → BigQuery · Cloud Build / Artifact Registry</li>
+        <li><b>External:</b> Open-Meteo (flood precip)</li>
+        <li class="muted" style="font-size:15px">Not claimed: Media CDN, Gemma edge, Cloud Translation API, ambient Dataflow</li>
+      </ul></div>
+  </div>
+  <div class="foot"><span>Zivo · Features (2/2)</span><span>5</span></div>
+</section>
+
+<!-- 5 Instant Dispatch scenario -->
+<section class="slide"><div class="bar"></div>
+  <h2>Instant Dispatch → Street Batch (real scenario)</h2>
+  <p style="font-size:18px;margin-bottom:12px"><b>Borella lane, Colombo.</b> Kamala needs milk powder and can’t climb stairs. Rain is building.</p>
+  <div class="flow">
+    <div class="step ai">⚡<b>Instant Dispatch</b>Finds Available helpers within ~0.5 km walk. Gemini picks one + fair wage floor.</div><div class="arrow">→</div>
+    <div class="step money">💰<b>Escrow + window</b>Job created; money held; 180 s Street Batch window opens on that block.</div><div class="arrow">→</div>
+    <div class="step">🏠<b>Priya joins</b>Same street (~150 m). Bread micro-job at ~30% off. Max 4 neighbours.</div><div class="arrow">→</div>
+    <div class="step ai">🛵<b>One trip</b>Helper route has both stops. <code>batch_join</code> → trips saved → CO₂e in BigQuery.</div>
+  </div>
+  <div class="warn" style="margin-top:18px">Gemini only <b>explains</b> the batch offer. Discount, radius, and escrow math are deterministic — not model output.</div>
+  <p class="muted" style="margin-top:14px;font-size:16px">Alternate path: post → match rank → Access note → adapted brief → Eyes / Doorstep → Start OTP → End OTP (Gemini never moves money).</p>
+  <div class="foot"><span>Zivo · Instant Dispatch</span><span>6</span></div>
+</section>
+
+<!-- 6 FLOW -->
+<section class="slide"><div class="bar"></div>
+  <h2>Process flow (main story)</h2>
+  <div class="lane">Client (Kamala)</div>
+  <div class="flow">
+    <div class="step">🎙️<b>Speaks Tamil</b>Mic or text</div><div class="arrow">→</div>
+    <div class="step ai">✨<b>Voice → plan</b>Transcript, draft, sub-tasks</div><div class="arrow">→</div>
+    <div class="step ai">🛡️<b>Safety gate</b>Fails to “review”</div><div class="arrow">→</div>
+    <div class="step money">💰<b>Escrow held</b>Or Instant Dispatch</div>
+  </div>
+  <div class="lane">Match</div>
+  <div class="flow">
+    <div class="step ai">🤝<b>Rank / Dispatch</b>Gemini explains; client decides</div><div class="arrow">→</div>
+    <div class="step">♿<b>Access note</b>Opt-in · choose someone else OK</div><div class="arrow">→</div>
+    <div class="step ai">🌐<b>Chat</b>ta ⇄ si ⇄ en · phones blocked</div>
+  </div>
+  <div class="lane">Helper (Nuwan, blind)</div>
+  <div class="flow">
+    <div class="step ai">🧭<b>Adapted brief</b>Tools named per step</div><div class="arrow">→</div>
+    <div class="step ai">📷<b>Eyes / Doorstep</b>“can’t tell” → sighted-assist</div><div class="arrow">→</div>
+    <div class="step money">🔑<b>Start → End OTP</b>Payout; no AI on money</div>
+  </div>
+  <div class="foot"><span>Blue = Gemini · Green = money path (no AI)</span><span>7</span></div>
+</section>
+
+<!-- 6 ARCH -->
+<section class="slide"><div class="bar"></div>
+  <h2>Architecture diagram</h2>
+  <div style="text-align:center"><img src="../architecture.png" style="max-height:500px"></div>
+  <p class="muted" style="text-align:center;font-size:16px">Flutter web on Cloud Run · API on Cloud Run · Gemini 2.5 on Vertex AI via the Google Gen AI SDK, routed over 4 regions with failover · Firestore · Cloud Storage · Pub/Sub → BigQuery · Cloud STT/TTS</p>
+  <div class="foot"><span>Zivo · Architecture</span><span>8</span></div>
+</section>
+
+<!-- 8 TECH -->
+<section class="slide"><div class="bar"></div>
+  <h2>Technologies used</h2>
+  <table>
+    <tr><th>Layer</th><th>Technology</th></tr>
+    <tr><td>Generative AI</td><td>Gemini 2.5 Flash and Flash-Lite on <b>Vertex AI</b> through <code>@google/genai</code>: audio, vision, function calling, JSON output; thinking off on hot paths; model race + multi-region failover</td></tr>
+    <tr><td>Speech</td><td>Cloud Speech-to-Text (Chirp), Cloud Text-to-Speech</td></tr>
+    <tr><td>Hosting</td><td>Cloud Run (web + API), scale-to-zero, max-instances cap; Cloud Build + Artifact Registry</td></tr>
+    <tr><td>Data</td><td>Firestore, Cloud Storage (signed URLs)</td></tr>
+    <tr><td>Analytics</td><td>Pub/Sub → BigQuery (<code>zivo_impact</code>), 1 km grid privacy, <code>access_fairness</code>; Looker Studio optional</td></tr>
+    <tr><td>Client</td><td>Flutter (web + mobile), BLoC, three-language UI, 200 % text tested</td></tr>
+    <tr><td>External</td><td>Open-Meteo (rainfall → flood-risk level)</td></tr>
+    <tr><td>Server</td><td>Node 22, TypeScript, Express, Zod; deterministic fallbacks beside every model call</td></tr>
+  </table>
+  <div class="foot"><span>Zivo · Technologies</span><span>9</span></div>
+</section>
+
+<!-- 8 COST -->
+<section class="slide"><div class="bar"></div>
+  <h2>Estimated implementation cost</h2>
+  <div class="grid g2">
+    <div class="card">
+      <table>
+        <tr><th>AI action</th><th>Est. cost</th></tr>
+        <tr><td>Voice → plan (10 s audio)</td><td>≈ US$0.002</td></tr>
+        <tr><td>Zivo Eyes (1 photo)</td><td>≈ US$0.001</td></tr>
+        <tr><td>Doorstep Talk (5 s audio)</td><td>≈ US$0.0007</td></tr>
+        <tr><td>Safety check</td><td>≈ US$0.0004</td></tr>
+        <tr><td>Concierge turn</td><td>≈ US$0.002–0.004</td></tr>
+      </table>
+      <p class="muted" style="font-size:14px">Estimates from list prices and typical token counts — not billing data.</p>
+    </div>
+    <div class="card"><h3>Budget maths</h3>
+      <ul>
+        <li>Prototype budget cap: <b>US$100</b> (billing alert set at 25/50/80/100 %).</li>
+        <li>Even at US$0.01 per AI action that is ~10,000 actions.</li>
+        <li>Cloud Run scales to zero: no idle cost.</li>
+        <li>A neighbour using ~20 AI actions a month ≈ US$0.05–0.20.</li>
+        <li>Sustainability: a 10 % fee on completed jobs funds the AI cost.</li>
+      </ul></div>
+  </div>
+  <div class="foot"><span>Zivo · Cost</span><span>10</span></div>
+</section>
+
+<!-- 10 SNAPSHOTS -->
+<section class="slide"><div class="bar"></div>
+  <h2>Snapshots of the prototype (live deployment)</h2>
+  <div class="shots">
+    <figure><img src="img/home.png"><br>Home (client)</figure>
+    <figure><img src="img/ability_picker.png"><br>“How should Zivo adapt to you?”</figure>
+    <figure><img src="img/hub_tools.png"><br>Zivo Eyes · Doorstep Talk · Say it</figure>
+  </div>
+  <div class="foot"><span>Screenshots of https://zivo-web-ihp5vjzpsa-el.a.run.app</span><span>11</span></div>
+</section>
+
+<!-- 11 PERFORMANCE -->
+<section class="slide"><div class="bar"></div>
+  <h2>Prototype performance report</h2>
+  <div class="grid g2">
+    <div class="card"><img src="../eval/eval_chart.png" style="max-height:300px"><p class="muted" style="font-size:14px">30 hand-written safety items (10 each en/ta/si), live API. Smoke test, not a benchmark.</p></div>
+    <div class="card">
+      <table>
+        <tr><th>Measurement (live)</th><th>Result</th></tr>
+        <tr><td>Safety: harmful / benign</td><td>12/12 blocked · 0/18 false alarms (keywords alone 7/12)</td></tr>
+        <tr><td>Voice → plan (Tamil)</td><td>≈ 4–5 s (was ≈ 8 s, two calls)</td></tr>
+        <tr><td>Zivo Eyes / Doorstep Talk</td><td>≈ 2.5–4.5 s / ≈ 1.8–3.7 s</td></tr>
+        <tr><td>Concierge (≈ 9 Gemini calls)</td><td>≈ 10–12 s (was 13–53 s)</td></tr>
+        <tr><td>Live smoke tests</td><td>demo 12/12 · lifecycle 11/11 · inclusion 12/12 · chat 8/8</td></tr>
+        <tr><td>Widget tests / analyzer</td><td>15/15 · 0 errors</td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="warn" style="margin-top:14px">Honest limits: pilot is <b>simulated</b> (8 invented personas through the real pipeline); no real users yet; Vertex quota is per region (handled by failover); new Sinhala/Tamil strings need native review.</div>
+  <div class="foot"><span>Zivo · Performance</span><span>12</span></div>
+</section>
+
+<!-- 12 ADDITIONAL -->
+<section class="slide"><div class="bar"></div>
+  <h2>Additional details and future development</h2>
+  <div class="grid g2">
+    <div class="card"><h3>Responsible AI (in code)</h3>
+      <ul>
+        <li>Client assigns; Gemini only ranks and explains.</li>
+        <li>Money moves only by top-up, escrow hold, End-OTP release or cancel refund — <b>no Gemini output is wired to it</b>.</li>
+        <li>Ability never changes rank, price or pay; disclosure is opt-in; declines monitored (id-free events → BigQuery).</li>
+        <li>Safety fails to “review”, never “allow”.</li>
+      </ul></div>
+    <div class="card"><h3>Roadmap</h3>
+      <ol style="margin:0;padding-left:24px">
+        <li style="font-size:17px"><b>Shipped:</b> Access audit · remote jobs · sighted-assist · chat phone block · Instant Dispatch · Street Batch</li>
+        <li style="font-size:17px">Co-design with a Sri Lankan disability association; native-speaker review of ta/si copy</li>
+        <li style="font-size:17px">Real ID verification; human appeal for safety blocks</li>
+        <li style="font-size:17px">“Quick signals” experiment with the Deaf community (not translation)</li>
+      </ol></div>
+  </div>
+  <div class="foot"><span>Zivo · Future</span><span>13</span></div>
+</section>
+
+<!-- 13 LINKS -->
+<section class="slide"><div class="bar"></div>
+  <h2>Links</h2>
+  <div class="card" style="width:1000px">
+    <p style="background:#FFF7E0;padding:10px 12px;border-radius:8px;border:1px solid #F0D48A"><b>GitHub public repository:</b> ________________________________</p>
+    <p style="background:#FFF7E0;padding:10px 12px;border-radius:8px;border:1px solid #F0D48A"><b>Demo video (3 minutes):</b> ________________________________</p>
+    <p><b>Final product link:</b> https://zivo-web-ihp5vjzpsa-el.a.run.app</p>
+    <p><b>API health:</b> https://zivo-api-ihp5vjzpsa-el.a.run.app/health</p>
+    <p class="muted" style="font-size:14px;margin-top:8px">Yellow rows = fill after you publish the repo and upload the 3:00 video.</p>
+  </div>
+  <p style="margin-top:28px;font-size:28px"><b>Zivo: help that speaks your language, and work for everyone.</b></p>
+  <div class="foot"><span>Built on Google Cloud: Cloud Run · Vertex AI Gemini · STT/TTS · Firestore · Pub/Sub · BigQuery</span><span>14</span></div>
+</section>
+
+</body>
+</html>

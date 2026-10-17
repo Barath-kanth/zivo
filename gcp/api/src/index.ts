@@ -49,12 +49,31 @@ import {
   transcribeVoice,
 } from './pillars/a11y.js';
 import { planTaskBundle } from './pillars/task_plan.js';
+import { translateChatMessage } from './pillars/translate.js';
+import { guardChatMessage } from './pillars/chat_guard.js';
+import { synthesizeSpeech } from './pillars/speech.js';
+import { voiceToPlan } from './pillars/voice_suggest.js';
+import { publishImpactEvent, summarizeImpact } from './events.js';
+import {
+  getResilienceStatus,
+  triageTaskPriority,
+} from './pillars/resilience.js';
+import {
+  abilityFit,
+  adaptBrief,
+  cleanAbilities,
+  doorstepTalk,
+  zivoEyes,
+  accessAudit,
+  type EyesMode,
+} from './pillars/abilities.js';
 import { sniffImageMime } from './image_mime.js';
 import { matchHelpers } from './pillars/match.js';
 import { instantDispatch } from './pillars/dispatch.js';
 import { quoteMicroPrice } from './pillars/pricing.js';
 import { generatePricingFields } from './pillars/pricing_fields.js';
 import { runTrustArbitrator } from './pillars/trust_arbitrator.js';
+import { runConcierge } from './pillars/concierge.js';
 import {
   helperStreetRoute,
   joinStreetBatch,
@@ -67,9 +86,13 @@ import {
 } from './pillars/vouch.js';
 import {
   acceptTask,
+  declineMatchedHelper,
+  attachTaskAccessAudit,
   attachMatchExplanation,
   appendSystemChatMessage,
   completeTask,
+  cancelClientTask,
+  editClientTask,
   startTask,
   createSession,
   createTask,
@@ -90,6 +113,8 @@ import {
   listTrustReviews,
   listUsers,
   listWatchingTasks,
+  getTaskChatUnread,
+  markTaskChatRead,
   openTaskDispute,
   publicProfile,
   seedDemo,
@@ -135,7 +160,8 @@ app.get('/', (_req, res) => {
   </body></html>`);
 });
 
-app.get('/health', (_req, res) => {
+app.get('/health', async (_req, res) => {
+  const { cacheStats } = await import('./redis_cache.js');
   res.json({
     ok: true,
     service: 'zivo-gcp-api',
@@ -146,6 +172,7 @@ app.get('/health', (_req, res) => {
     uploads: uploadsConfigured(),
     geminiModel: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash-lite',
     vertexLocation: process.env.VERTEX_LOCATION ?? 'us-central1',
+    taskCache: cacheStats(),
   });
 });
 
@@ -220,17 +247,31 @@ app.patch('/me', async (req, res) => {
     const user = await getUser(id);
     if (!user) return res.status(404).json({ error: 'Not found' });
     const patch = req.body as Record<string, unknown>;
+    const nic =
+      patch.nic_number != null ? String(patch.nic_number).replace(/\s+/g, '') : user.nic_number;
+    let kyc = user.kyc_status;
+    // Clients cannot self-verify without a plausible NIC (12 digits / classic format).
+    if (patch.kyc_status != null) {
+      const wanted = String(patch.kyc_status);
+      const nicOk = Boolean(nic && (/^\d{12}$/.test(nic) || /^[0-9]{9}[vVxX]$/.test(nic)));
+      if (wanted === 'verified' && nicOk) kyc = 'verified';
+      else if (wanted === 'pending' || wanted === 'unverified' || wanted === 'rejected') kyc = wanted;
+      // junk / verified without NIC → ignore
+    }
     const next = {
       ...user,
       ...(patch.full_name != null ? { full_name: String(patch.full_name) } : {}),
       ...(patch.helper_bio != null ? { helper_bio: String(patch.helper_bio) } : {}),
       ...(patch.home_address != null ? { home_address: String(patch.home_address) } : {}),
       ...(patch.role_intent != null ? { role_intent: String(patch.role_intent) } : {}),
-      ...(patch.kyc_status != null ? { kyc_status: String(patch.kyc_status) } : {}),
       ...(patch.nic_number != null ? { nic_number: String(patch.nic_number) } : {}),
+      kyc_status: kyc,
       ...(patch.guidelines_accepted_at != null
         ? { guidelines_accepted_at: String(patch.guidelines_accepted_at) }
         : {}),
+      ...(Array.isArray(patch.abilities) ? { abilities: cleanAbilities(patch.abilities) } : {}),
+      ...(typeof patch.disclose_access === 'boolean' ? { disclose_access: patch.disclose_access } : {}),
+      ...(patch.access_note != null ? { access_note: String(patch.access_note).slice(0, 240) } : {}),
       ...(Array.isArray(patch.helper_skills)
         ? { helper_skills: patch.helper_skills.map(String) }
         : {}),
@@ -371,6 +412,164 @@ app.post('/uploads/photo', upload.single('photo'), async (req, res) => {
     res.status(201).json(result);
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'Upload failed' });
+  }
+});
+
+
+/* ── Ability-aware work ─────────────────────────────────────────────────── */
+
+app.get('/tasks/:id/ability-fit', async (req, res) => {
+  try {
+    const userId = await requireUser(req);
+    const user = await getUser(userId);
+    const task = await getTask(String(req.params.id));
+    if (!user || !task) return res.status(404).json({ error: 'Not found' });
+    res.json({ fit: abilityFit(task, cleanAbilities(user.abilities)) });
+  } catch (e) {
+    res.status(401).json({ error: e instanceof Error ? e.message : 'Unauthorized' });
+  }
+});
+
+app.post('/tasks/:id/adapt-brief', async (req, res) => {
+  try {
+    const userId = await requireUser(req);
+    const user = await getUser(userId);
+    const task = await getTask(String(req.params.id));
+    if (!user || !task) return res.status(404).json({ error: 'Not found' });
+    const lang = String(req.body?.lang ?? user.preferred_lang ?? 'en');
+    res.json(await adaptBrief({ task, abilities: cleanAbilities(user.abilities), lang }));
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'Brief failed' });
+  }
+});
+
+app.post('/tasks/:id/decline-helper', async (req, res) => {
+  try {
+    const userId = await requireUser(req);
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason : undefined;
+    const task = await declineMatchedHelper(String(req.params.id), userId, reason);
+    res.json({ task });
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'Decline failed' });
+  }
+});
+
+app.post('/a11y/eyes', upload.single('image'), async (req, res) => {
+  try {
+    await requireUser(req);
+    const modeRaw = String(req.body?.mode ?? 'describe');
+    const mode = (['describe', 'read', 'match'].includes(modeRaw) ? modeRaw : 'describe') as EyesMode;
+    let items: string[] = [];
+    try {
+      const raw = req.body?.items;
+      if (typeof raw === 'string' && raw.trim()) items = JSON.parse(raw);
+      else if (Array.isArray(raw)) items = raw.map(String);
+    } catch { /* ignore */ }
+    res.json(
+      await zivoEyes({
+        image: req.file?.buffer,
+        mimeType: req.file?.buffer?.length
+          ? sniffImageMime(req.file.buffer, req.file.mimetype)
+          : undefined,
+        mode,
+        lang: String(req.body?.lang ?? 'en'),
+        items,
+        hint: typeof req.body?.hint === 'string' ? req.body.hint : undefined,
+      }),
+    );
+  } catch (e) {
+    res.status(502).json({ error: e instanceof Error ? e.message : 'Eyes failed' });
+  }
+});
+
+app.post('/a11y/doorstep', upload.single('audio'), async (req, res) => {
+  try {
+    await requireUser(req);
+    res.json(
+      await doorstepTalk({
+        audio: req.file?.buffer,
+        mimeType: req.file?.mimetype,
+        readerLang: String(req.body?.lang ?? 'en'),
+      }),
+    );
+  } catch (e) {
+    res.status(502).json({ error: e instanceof Error ? e.message : 'Doorstep failed' });
+  }
+});
+
+app.post('/a11y/access-audit', upload.single('image'), async (req, res) => {
+  try {
+    await requireUser(req);
+    res.json(
+      await accessAudit({
+        image: req.file?.buffer,
+        mimeType: req.file?.buffer?.length
+          ? sniffImageMime(req.file.buffer, req.file.mimetype)
+          : undefined,
+        lang: String(req.body?.lang ?? 'en'),
+        hint: typeof req.body?.hint === 'string' ? req.body.hint : undefined,
+      }),
+    );
+  } catch (e) {
+    res.status(502).json({ error: e instanceof Error ? e.message : 'Access audit failed' });
+  }
+});
+
+app.post('/tasks/:id/access-audit', upload.single('image'), async (req, res) => {
+  try {
+    const userId = await requireUser(req);
+    const task = await getTask(String(req.params.id));
+    if (!task) return res.status(404).json({ error: 'Task not found' });
+    if (task.client_id !== userId) return res.status(403).json({ error: 'Only the booker can attach an access audit' });
+    const audit = await accessAudit({
+      image: req.file?.buffer,
+      mimeType: req.file?.buffer?.length
+        ? sniffImageMime(req.file.buffer, req.file.mimetype)
+        : undefined,
+      lang: String(req.body?.lang ?? 'en'),
+      hint: typeof req.body?.hint === 'string' ? req.body.hint : undefined,
+    });
+    const saved = await attachTaskAccessAudit(
+      task.id,
+      audit as unknown as Record<string, unknown>,
+    );
+    res.json({ audit, task: saved });
+  } catch (e) {
+    console.error('[tasks/access-audit] failed', e);
+    res.status(400).json({ error: e instanceof Error ? e.message : 'Access audit failed' });
+  }
+});
+
+app.post('/a11y/tts', async (req, res) => {
+  try {
+    await requireUser(req);
+    const body = z
+      .object({
+        text: z.string().trim().min(1).max(1200),
+        lang: z.string().optional(),
+      })
+      .parse(req.body ?? {});
+    const lang = body.lang === 'si' || body.lang === 'ta' || body.lang === 'en' ? body.lang : 'en';
+    res.json(await synthesizeSpeech({ text: body.text, lang }));
+  } catch (e) {
+    res.status(400).json({ error: friendlyError(e, 'TTS failed') });
+  }
+});
+
+app.post('/tasks/voice-plan', upload.single('audio'), async (req, res) => {
+  try {
+    await requireUser(req);
+    const langRaw = String(req.body?.lang ?? 'auto');
+    res.json(
+      await voiceToPlan({
+        audioBytes: req.file?.buffer,
+        mimeType: req.file?.mimetype,
+        lang: langRaw,
+      }),
+    );
+  } catch (e) {
+    console.error('[voice-plan] failed', e);
+    res.status(502).json({ error: e instanceof Error ? e.message : 'Voice plan failed' });
   }
 });
 
@@ -1038,6 +1237,17 @@ app.get('/tasks/open', async (req, res) => {
 app.get('/tasks/:id', async (req, res) => {
   const task = await getTask(String(req.params.id));
   if (!task) return res.status(404).json({ error: 'Not found' });
+  // Access notes are private to the booker (+ matched helper). Strip for anonymous / strangers.
+  const viewerId = await userIdFromAuthHeader(
+    req.header('authorization') ?? undefined,
+  );
+  const canSeeAccess =
+    Boolean(viewerId) &&
+    (viewerId === task.client_id || viewerId === task.helper_id);
+  if (!canSeeAccess && task.helper?.access) {
+    const { access: _access, ...helperPublic } = task.helper;
+    return res.json({ task: { ...task, helper: helperPublic } });
+  }
   res.json({ task });
 });
 
@@ -1105,7 +1315,9 @@ app.get('/tasks/:id/chat', async (req, res) => {
   try {
     const userId = await requireUser(req);
     const after = typeof req.query.after === 'string' ? req.query.after : undefined;
-    res.json(await listTaskChat(String(req.params.id), userId, after));
+    const langRaw = typeof req.query.lang === 'string' ? req.query.lang : 'en';
+    const lang = langRaw === 'si' || langRaw === 'ta' || langRaw === 'en' ? langRaw : 'en';
+    res.json(await listTaskChat(String(req.params.id), userId, after, lang));
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Chat failed';
     const code = msg.includes('Only the client') ? 403 : 400;
@@ -1116,14 +1328,56 @@ app.get('/tasks/:id/chat', async (req, res) => {
 app.post('/tasks/:id/chat', async (req, res) => {
   try {
     const userId = await requireUser(req);
-    const body = z
-      .object({ body: z.string().trim().min(1).max(2000) })
+    const raw = z
+      .object({
+        body: z.string().trim().min(1).max(2000),
+        lang: z.string().optional(),
+        /** Voice note → transcript; same contact + vernacular guards as typed text. */
+        via_voice: z.boolean().optional(),
+      })
       .parse(req.body);
+    const body = {
+      body: raw.body,
+      lang: (raw.lang === 'si' || raw.lang === 'ta' || raw.lang === 'en'
+        ? raw.lang
+        : undefined) as 'en' | 'si' | 'ta' | undefined,
+      via_voice: raw.via_voice === true,
+    };
     const taskId = String(req.params.id);
     const task = await getTask(taskId);
     if (!task) return res.status(404).json({ error: 'Task not found' });
 
-    // Cup-unique: vernacular safety on every message (not just task create).
+    const contact = guardChatMessage(body.body);
+    if (!contact.ok) {
+      await publishImpactEvent({
+        type: 'chat_contact_block',
+        userId,
+        taskId,
+        payload: { code: contact.code, via_voice: body.via_voice },
+      });
+      try {
+        const abuse = contact.code === 'abuse';
+        await appendSystemChatMessage(
+          taskId,
+          abuse
+            ? body.via_voice
+              ? 'Voice note blocked — keep language respectful (no abuse, violence, or drugs).'
+              : 'Message blocked — keep language respectful (no abuse, violence, or drugs).'
+            : body.via_voice
+              ? 'Voice note blocked — phone numbers and off-app apps are not allowed. Keep coordination on Zivo.'
+              : 'Message blocked — phone numbers and off-app apps are not allowed. Keep coordination on Zivo.',
+        );
+      } catch {
+        /* ignore */
+      }
+      return res.status(422).json({
+        error: contact.reason,
+        blocked: true,
+        blocked_reason: contact.code,
+      });
+    }
+
+    // Cup-unique: vernacular safety on every message (text + voice transcript).
     const safety = await checkTaskSafety({
       title: `chat:${task.title}`,
       description: body.body,
@@ -1132,7 +1386,9 @@ app.post('/tasks/:id/chat', async (req, res) => {
       try {
         await appendSystemChatMessage(
           taskId,
-          'Message blocked by community safety — keep coordination ordinary and on-platform.',
+          body.via_voice
+            ? 'Voice note blocked by community safety — keep coordination ordinary and on-platform.'
+            : 'Message blocked by community safety — keep coordination ordinary and on-platform.',
         );
       } catch {
         /* ignore */
@@ -1150,13 +1406,19 @@ app.post('/tasks/:id/chat', async (req, res) => {
       });
     }
 
+    const xlang = await translateChatMessage({ text: body.body, hintLang: body.lang });
     const message = await sendTaskChatMessage({
       taskId,
       senderId: userId,
-      body: body.body,
+      body: xlang.body_original,
+      body_original: xlang.body_original,
+      source_lang: xlang.source_lang,
+      translations: xlang.translations,
+      via_voice: body.via_voice,
     });
     res.status(201).json({
       message,
+      xlang,
       safety: {
         allowed: true,
         action: safety.action ?? 'allow',
@@ -1164,6 +1426,29 @@ app.post('/tasks/:id/chat', async (req, res) => {
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Send failed';
+    const code = msg.includes('Only the client') ? 403 : 400;
+    res.status(code).json({ error: msg });
+  }
+});
+
+/** WhatsApp-style unread badge count for client + helper. */
+app.get('/tasks/:id/chat/unread', async (req, res) => {
+  try {
+    const userId = await requireUser(req);
+    res.json(await getTaskChatUnread(String(req.params.id), userId));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Unread failed';
+    const code = msg.includes('Only the client') ? 403 : 400;
+    res.status(code).json({ error: msg });
+  }
+});
+
+app.post('/tasks/:id/chat/read', async (req, res) => {
+  try {
+    const userId = await requireUser(req);
+    res.json(await markTaskChatRead(String(req.params.id), userId));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Mark read failed';
     const code = msg.includes('Only the client') ? 403 : 400;
     res.status(code).json({ error: msg });
   }
@@ -1398,6 +1683,122 @@ app.post('/tasks/:id/complete', async (req, res) => {
     res.json(await completeTask(String(req.params.id), body));
   } catch (e) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'Complete failed' });
+  }
+});
+
+/** Client cancels / deletes a job before End OTP — escrow refunded. */
+app.post('/tasks/:id/cancel', async (req, res) => {
+  try {
+    const clientId = await requireUser(req);
+    const body = z
+      .object({ reason: z.string().max(400).optional() })
+      .safeParse(req.body ?? {});
+    const task = await cancelClientTask(
+      String(req.params.id),
+      clientId,
+      body.success ? body.data.reason : undefined,
+    );
+    res.json({ task });
+  } catch (e) {
+    res.status(400).json({
+      error: e instanceof Error ? e.message : 'Cancel failed',
+    });
+  }
+});
+
+/** Client edits title/description while open or matched (before Start OTP). */
+app.patch('/tasks/:id', async (req, res) => {
+  try {
+    const clientId = await requireUser(req);
+    const body = z
+      .object({
+        title: z.string().min(3).max(120).optional(),
+        description: z.string().min(8).max(2000).optional(),
+      })
+      .parse(req.body);
+    const task = await editClientTask(String(req.params.id), clientId, body);
+    res.json({ task });
+  } catch (e) {
+    res.status(400).json({
+      error: e instanceof Error ? e.message : 'Edit failed',
+    });
+  }
+});
+
+/** Cup — community impact summary (Pub/Sub + Firestore; BigQuery-ready). */
+app.get('/impact/summary', async (_req, res) => {
+  try {
+    res.json(await summarizeImpact());
+  } catch (e) {
+    res.status(500).json({
+      error: e instanceof Error ? e.message : 'Impact summary failed',
+    });
+  }
+});
+
+/** Cup — monsoon / flood resilience status (Open-Meteo + Gemini triage). */
+app.get('/resilience/status', async (req, res) => {
+  try {
+    const lat = Number(req.query.lat ?? 6.9271);
+    const lon = Number(req.query.lon ?? 79.8612);
+    res.json(await getResilienceStatus({ lat, lon }));
+  } catch (e) {
+    res.status(400).json({
+      error: e instanceof Error ? e.message : 'Resilience status failed',
+    });
+  }
+});
+
+app.post('/resilience/triage', async (req, res) => {
+  try {
+    const body = z
+      .object({
+        title: z.string().trim().min(1),
+        description: z.string().trim().min(1),
+        category: z.string().optional(),
+        lat: z.number().optional(),
+        lon: z.number().optional(),
+      })
+      .parse(req.body);
+    const status = await getResilienceStatus({
+      lat: body.lat ?? 6.9271,
+      lon: body.lon ?? 79.8612,
+    });
+    const triage = await triageTaskPriority({
+      title: body.title,
+      description: body.description,
+      category: body.category,
+      hazard: status.hazard,
+    });
+    res.json({ status, triage });
+  } catch (e) {
+    res.status(400).json({
+      error: friendlyError(e, 'Triage failed'),
+    });
+  }
+});
+
+/** Voice / text neighbour helper — Gemini tools with deterministic fallback. */
+app.post('/agent/concierge', async (req, res) => {
+  try {
+    const body = z
+      .object({
+        utterance: z.string().min(1).max(2000),
+        lang: z.enum(['en', 'si', 'ta']).optional(),
+        lat: z.number().optional(),
+        lon: z.number().optional(),
+      })
+      .safeParse(req.body);
+    if (!body.success) {
+      return res.status(400).json({ error: body.error.flatten() });
+    }
+    const result = await runConcierge(body.data);
+    res.json(result);
+  } catch (e) {
+    console.error('[agent/concierge] failed', e);
+    res.status(502).json({
+      error: e instanceof Error ? e.message : 'Concierge failed',
+    });
   }
 });
 

@@ -21,7 +21,7 @@ export type TaskPlanResult = {
 
 const ALLOWED = new Set<string>(PHOTO_SUGGEST_CATEGORIES);
 
-function mockPlan(problem: string, categoryHint?: string): TaskPlanResult {
+export function mockPlan(problem: string, categoryHint?: string): TaskPlanResult {
   const p = problem.toLowerCase();
   const isMoving =
     /mov|shift|pack|furniture|house|apartment|flat/.test(p) ||
@@ -160,7 +160,7 @@ function mockPlan(problem: string, categoryHint?: string): TaskPlanResult {
   };
 }
 
-function coerceTasks(raw: unknown[]): PlanTaskDraft[] {
+export function coerceTasks(raw: unknown[]): PlanTaskDraft[] {
   const out: PlanTaskDraft[] = [];
   for (const item of raw.slice(0, 6)) {
     if (!item || typeof item !== 'object') continue;
@@ -212,14 +212,16 @@ export async function planTaskBundle(input: {
     tasks?: unknown[];
   }>(
     `You plan neighborhood-help tasks for Zivo (Sri Lanka).
-Split ONE real-world problem into 2–5 short, bookable helper tasks.
+The problem may be written in ANY language (Tamil, Sinhala, English, Hindi, Arabic, Chinese, French, Spanish, or mixed). Understand it and split into 2–5 short, bookable helper tasks.
 Each task must be independently completable by a local helper.
+Keep titles/descriptions in the user's language when clear; otherwise use clear simple English.
 Categories must be one of: ${[...ALLOWED].join('|')}
 Return ONLY JSON:
 {"bundle_title":"...","explanation":"1 sentence","tasks":[{"title":"...","category":"...","description":"2-4 sentences","estimated_hours":1,"goods_budget":0}]}
 Rules: no illegal work; goods_budget only for grocery/errand shopping; keep practical.
 Problem: ${JSON.stringify(problem)}
-Category hint: ${JSON.stringify(input.category_hint ?? '')}`,
+Category hint: ${JSON.stringify(input.category_hint ?? '')}
+Locale hint: ${JSON.stringify(input.lang ?? 'auto')}`,
   );
 
   const tasks = coerceTasks(Array.isArray(g.tasks) ? g.tasks : []);

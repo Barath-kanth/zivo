@@ -24,6 +24,10 @@ abstract class CategoryTaskGuide {
     TaskCategory.eventHelp => ["Set up an event", "Assist event guests", "Serve at an event", "Clean up after an event"],
     TaskCategory.photography => ["Photograph an event", "Take product photos", "Take portrait photos", "Photograph a property"],
     TaskCategory.homeRepair => ["Assemble furniture", "Repair a household fitting", "Help with minor plumbing", "Help with a small repair"],
+    TaskCategory.phoneCheckIn => ["Check on an elder by phone", "Daily wellness call", "Remind someone about medicine"],
+    TaskCategory.readingAloud => ["Read a letter aloud", "Read a form or notice", "Read a school message"],
+    TaskCategory.remoteTutoring => ["Maths by phone", "Language practice by video", "Homework help by video"],
+    TaskCategory.sightedAssist => ["60-second product check", "Read a label on camera", "Confirm a shopping item"],
     TaskCategory.other => ["General local assistance", "Help with a household task"],
   };
 
@@ -48,6 +52,10 @@ abstract class CategoryTaskGuide {
     TaskCategory.eventHelp => "Describe the event, expected guests, duties and working hours.",
     TaskCategory.photography => "Describe the subject, location, number of images and delivery requirements.",
     TaskCategory.homeRepair => "Describe the fault or item, work needed and tools or parts available.",
+    TaskCategory.phoneCheckIn => "Who to call, when, and what to ask. Share the phone number in chat after matching.",
+    TaskCategory.readingAloud => "What to read (letter, form, message) and the language. Share a photo or text after matching.",
+    TaskCategory.remoteTutoring => "Subject, learner level, and whether phone or video. No travel needed.",
+    TaskCategory.sightedAssist => "What the blind neighbour needs checked, and how long (about 60 seconds).",
     TaskCategory.other => "Describe exactly what help you need, the expected result and timing.",
   };
 
@@ -74,6 +82,10 @@ abstract class CategoryTaskGuide {
         TaskCategory.eventHelp => [{"id": "guest_count", "label": "Approximate guests", "type": "number", "required": true}, {"id": "helpers_needed", "label": "Helpers needed", "type": "number", "required": true}],
         TaskCategory.photography => [{"id": "delivery_type", "label": "Photo delivery", "type": "select", "required": true, "options": ["Digital images", "Digital images and prints"]}, {"id": "editing_level", "label": "Editing", "type": "select", "required": true, "options": ["Basic colour correction", "Detailed retouching", "Unedited images"]}],
         TaskCategory.homeRepair => [{"id": "tools_available", "label": "Tools", "type": "select", "required": true, "options": ["Provided by me", "Helper should bring tools"]}, {"id": "parts_available", "label": "Parts or materials", "type": "select", "required": true, "options": ["Already available", "Need advice before purchasing", "Not required"]}],
+        TaskCategory.phoneCheckIn => [{"id": "call_minutes", "label": "Call length", "type": "number", "required": true, "unit": "min"}],
+        TaskCategory.readingAloud => [{"id": "pages_or_items", "label": "Pages or items to read", "type": "number", "required": true}],
+        TaskCategory.remoteTutoring => [{"id": "lesson_hours", "label": "Lesson length", "type": "number", "required": true, "unit": "hours"}, {"id": "subject", "label": "Subject", "type": "text", "required": true}],
+        TaskCategory.sightedAssist => [{"id": "call_minutes", "label": "Check length", "type": "number", "required": true, "unit": "min"}],
         TaskCategory.other => [{"id": "expected_hours", "label": "Expected time needed", "type": "number", "required": true, "unit": "hours"}],
       },
       {'id': 'deadline_at', 'label': 'Complete before', 'type': 'date', 'required': true},

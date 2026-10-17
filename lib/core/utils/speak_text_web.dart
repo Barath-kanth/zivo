@@ -3,8 +3,16 @@ import 'dart:html' as html;
 
 import 'package:flutter/foundation.dart';
 
+/// Optional Cloud TTS hook (returns true if audio was played).
+typedef CloudSpeakFn = Future<bool> Function(String text, String lang);
+
+/// Set from [main] to prefer Cloud TTS (ta-IN / en-IN; si bridged).
+CloudSpeakFn? cloudSpeakOverride;
+
 /// Shared speaking flag — UI listens so Read ↔ Stop icons stay in sync.
 final ValueNotifier<bool> speakingListenable = ValueNotifier<bool>(false);
+
+html.AudioElement? _cloudAudio;
 
 /// Keep utterance referenced so Chrome GC doesn't kill speech mid-flight.
 html.SpeechSynthesisUtterance? _activeUtterance;
@@ -47,8 +55,13 @@ html.SpeechSynthesisVoice? _pickVoice(
 ) {
   if (voices.isEmpty) return null;
   final preferred = switch (lang) {
-    'ta' => ['ta-IN', 'ta'],
-    'si' => ['si-LK', 'si'],
+    'ta' => ['ta-IN', 'ta', 'hi-IN', 'en-IN'],
+    'si' => ['si-LK', 'si', 'en-IN', 'en-GB'],
+    'hi' => ['hi-IN', 'hi', 'en-IN'],
+    'es' => ['es-ES', 'es-MX', 'es', 'en-US'],
+    'fr' => ['fr-FR', 'fr', 'en-US'],
+    'ar' => ['ar-SA', 'ar-EG', 'ar', 'en-US'],
+    'zh' => ['zh-CN', 'zh-TW', 'zh', 'en-US'],
     // en-LK is often missing — prefer US/GB/IN first.
     _ => ['en-US', 'en-GB', 'en-IN', 'en-AU', 'en'],
   };
@@ -77,6 +90,26 @@ Future<void> speakText(
     onDone?.call();
     return;
   }
+
+  stopSpeaking();
+  await Future<void>.delayed(const Duration(milliseconds: 80));
+
+  // Prefer Cloud TTS for Tamil / Sinhala (browser synth is unreliable).
+  if (cloudSpeakOverride != null && (lang == 'ta' || lang == 'si' || lang == 'en')) {
+    try {
+      speakingListenable.value = true;
+      final ok = await cloudSpeakOverride!(trimmed, lang);
+      if (ok) {
+        speakingListenable.value = false;
+        onDone?.call();
+        return;
+      }
+    } catch (_) {
+      /* fall through to browser synth */
+    }
+    speakingListenable.value = false;
+  }
+
   final synth = html.window.speechSynthesis;
   if (synth == null) {
     onDone?.call();
@@ -101,6 +134,11 @@ Future<void> speakText(
     u.lang = switch (lang) {
       'ta' => 'ta-IN',
       'si' => 'si-LK',
+      'hi' => 'hi-IN',
+      'es' => 'es-ES',
+      'fr' => 'fr-FR',
+      'ar' => 'ar-SA',
+      'zh' => 'zh-CN',
       _ => 'en-US',
     };
   }
@@ -140,4 +178,51 @@ void stopSpeaking() {
   speakingListenable.value = false;
   _activeUtterance = null;
   html.window.speechSynthesis?.cancel();
+  try {
+    _cloudAudio?.pause();
+    _cloudAudio?.remove();
+  } catch (_) {
+    /* ignore */
+  }
+  _cloudAudio = null;
+}
+
+/// Play base64 MP3 from Cloud TTS; used by [cloudSpeakOverride].
+Future<bool> playCloudMp3Base64(String b64) async {
+  final done = Completer<void>();
+  try {
+    _cloudAudio?.pause();
+    _cloudAudio?.remove();
+  } catch (_) {}
+  final audio = html.AudioElement()
+    ..src = 'data:audio/mpeg;base64,$b64'
+    ..autoplay = true;
+  _cloudAudio = audio;
+  html.document.body?.append(audio);
+  void finish([_]) {
+    if (!done.isCompleted) done.complete();
+    audio.remove();
+    if (identical(_cloudAudio, audio)) _cloudAudio = null;
+  }
+
+  audio.onEnded.listen(finish);
+  audio.onError.listen(finish);
+  try {
+    await audio.play();
+  } catch (_) {
+    finish();
+    return false;
+  }
+  await done.future.timeout(
+    const Duration(seconds: 60),
+    onTimeout: () {},
+  );
+  return true;
+}
+
+/// Decode Cloud TTS JSON `{audio_base64}` helper for callers.
+String? audioBase64FromTtsResponse(Map<String, dynamic> res) {
+  final v = res['audio_base64'];
+  if (v is String && v.isNotEmpty) return v;
+  return null;
 }

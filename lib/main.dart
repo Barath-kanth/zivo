@@ -1,10 +1,14 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
 import 'app.dart';
 import 'blocs/auth/auth_bloc.dart';
 import 'blocs/a11y/a11y_cubit.dart';
+import 'blocs/ability/ability_cubit.dart';
+import 'blocs/theme/theme_cubit.dart';
+import 'core/l10n/locale_cubit.dart';
 import 'blocs/mode/mode_cubit.dart';
 import 'blocs/task/task_bloc.dart';
 import 'blocs/wallet/wallet_bloc.dart';
@@ -14,6 +18,7 @@ import 'core/services/gcp/gcp_api_client.dart';
 import 'core/services/kyc/kyc_verifier.dart';
 import 'core/services/profile_service.dart';
 import 'core/utils/oauth_url.dart';
+import 'core/utils/speak_text.dart';
 import 'data/repositories/auth_repository.dart';
 import 'data/repositories/profile_repository.dart';
 import 'data/repositories/task_repository.dart';
@@ -24,6 +29,11 @@ import 'data/repositories/payment_repository.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Always publish the semantics tree on web so landmarks / roles appear for
+  // screen readers and automated a11y audits (not only after Assistive Tech).
+  if (kIsWeb) {
+    SemanticsBinding.instance.ensureSemantics();
+  }
 
   String? pendingOAuthError;
   if (kIsWeb) {
@@ -46,6 +56,18 @@ void main() async {
   final walletRepository = WalletRepository(api);
   final paymentRepository = PaymentRepository(api);
 
+  // Cloud TTS for ta/si/en — browser synth is unreliable for vernacular.
+  cloudSpeakOverride = (text, lang) async {
+    try {
+      final res = await taskRepository.cloudTts(text: text, lang: lang);
+      final b64 = audioBase64FromTtsResponse(res);
+      if (b64 == null) return false;
+      return playCloudMp3Base64(b64);
+    } catch (_) {
+      return false;
+    }
+  };
+
   runApp(
     MultiRepositoryProvider(
       providers: [
@@ -67,16 +89,44 @@ void main() async {
               final bloc = AuthBloc(authRepository: ctx.read<AuthRepository>())
                 ..add(AuthCheckRequested());
               if (pendingOAuthError != null) {
-                bloc.add(AuthOAuthCallbackFailed(pendingOAuthError!));
+                bloc.add(AuthOAuthCallbackFailed(pendingOAuthError));
               }
               return bloc;
             },
           ),
           BlocProvider(
-            create: (ctx) =>
-                ModeCubit(authRepository: ctx.read<AuthRepository>()),
+            create: (ctx) => ModeCubit(
+              authRepository: ctx.read<AuthRepository>(),
+              onProfileUpdated: (profile) {
+                ctx.read<AuthBloc>().add(AuthProfileSynced(profile));
+              },
+            ),
           ),
           BlocProvider(create: (_) => A11yCubit()),
+          BlocProvider(create: (_) => ThemeCubit()),
+          BlocProvider(
+            create: (_) => AbilityCubit(
+              onChanged: (p) async {
+                if (!api.isSignedIn) return;
+                await taskRepository.saveAbilityProfile(
+                  abilities: p.abilities.toList(),
+                  disclose: p.disclose,
+                  note: p.note,
+                );
+              },
+            ),
+          ),
+          BlocProvider(
+            create: (_) {
+              final locale = LocaleCubit();
+              locale.onLocaleChanged = (code) async {
+                if (!api.isSignedIn) return;
+                if (code != 'en' && code != 'si' && code != 'ta') return;
+                await taskRepository.syncPreferredLang(code);
+              };
+              return locale;
+            },
+          ),
           BlocProvider(
             create: (ctx) =>
                 TaskBloc(taskRepository: ctx.read<TaskRepository>()),

@@ -28,6 +28,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<AuthRemoveDeviceAccountRequested>(_onRemoveDeviceAccount);
     on<AuthDemoLoginRequested>(_onDemoLogin);
     on<AuthOnboardingCompleted>(_onOnboardingCompleted);
+    on<AuthProfileSynced>(_onProfileSynced);
     on<AuthProfileRefreshRequested>(_onProfileRefresh);
     on<AuthSignInRequested>(_onSignIn);
     on<AuthSignUpRequested>(_onSignUp);
@@ -307,6 +308,14 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   ) async {
     await _remember(event.profile, isDemo: false);
     // Always leave onboarding after a successful KYC submit (pending or verified).
+    emit(AuthAuthenticated(event.profile));
+  }
+
+  Future<void> _onProfileSynced(
+    AuthProfileSynced event,
+    Emitter<AuthState> emit,
+  ) async {
+    await _remember(event.profile, isDemo: false);
     emit(AuthAuthenticated(event.profile));
   }
 

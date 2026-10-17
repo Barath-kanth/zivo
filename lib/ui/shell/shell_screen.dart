@@ -2,6 +2,7 @@ import 'package:hyperlocal/ui/_shared/shell_route_content.dart';
 import 'package:hyperlocal/ui/_shared/desktop_sidebar.dart';
 import 'package:hyperlocal/ui/_shared/glass_dock.dart';
 import 'package:hyperlocal/ui/_shared/app_viewport.dart';
+import 'package:hyperlocal/ui/_shared/a11y_landmarks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
@@ -9,13 +10,13 @@ import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
 import 'package:hyperlocal/blocs/mode/mode_cubit.dart';
 import 'package:hyperlocal/blocs/task/task_bloc.dart';
 import 'package:hyperlocal/blocs/wallet/wallet_bloc.dart';
-import 'package:hyperlocal/core/constants/app_colors.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
+import 'package:hyperlocal/core/constants/zivo_palette.dart';
 import 'package:hyperlocal/core/router/app_router.dart';
 import 'package:hyperlocal/core/utils/auth_gate.dart';
-import 'package:hyperlocal/ui/_shared/a11y_hub.dart';
 import 'package:hyperlocal/ui/client/client_home_screen.dart';
 import 'package:hyperlocal/ui/helper/helper_home_screen.dart';
+import 'package:hyperlocal/core/l10n/locale_cubit.dart';
 import 'mode_toggle_widget.dart';
 
 class ShellScreen extends StatefulWidget {
@@ -28,7 +29,6 @@ class ShellScreen extends StatefulWidget {
 
 class _ShellScreenState extends State<ShellScreen> {
   Type? _prevModeType;
-  bool _inviteScheduled = false;
 
   @override
   void initState() {
@@ -36,6 +36,7 @@ class _ShellScreenState extends State<ShellScreen> {
     final authState = context.read<AuthBloc>().state;
     if (authState is AuthAuthenticated) {
       final userId = authState.profile.id;
+      // Prefer local workspace pref (refresh keeps helper/client; first open → client).
       context.read<ModeCubit>().initFromProfile(authState.profile);
       context.read<WalletBloc>()
         ..add(WalletFetchRequested(userId))
@@ -43,11 +44,6 @@ class _ShellScreenState extends State<ShellScreen> {
     } else {
       context.read<ModeCubit>().initGuest();
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _inviteScheduled) return;
-      _inviteScheduled = true;
-      maybeShowA11yInvite(context);
-    });
   }
 
   int _calculateSelectedIndex(bool isHelper, String path) {
@@ -95,7 +91,14 @@ class _ShellScreenState extends State<ShellScreen> {
               ..add(TaskSubscribeToFeed())
               ..add(TaskFetchHelperActive())
               ..add(TaskFetchNearbyTasks());
-            context.go(AppRoutes.shell);
+            // Force home only on an intentional switch into helper (Client →
+            // ModeToggling → Helper). Skip on remount/restore so refresh can
+            // keep /wallet or Active Job under the same workspace.
+            if (prev == ClientMode ||
+                prev == ModeHelperBlocked ||
+                prev == ModeToggling) {
+              context.go(AppRoutes.shell);
+            }
           } else if (state is ClientMode) {
             context.read<TaskBloc>().add(TaskUnsubscribeFromFeed());
             if (!state.profile.isGuest) {
@@ -121,39 +124,48 @@ class _ShellScreenState extends State<ShellScreen> {
           final hideDock = desktop ||
               MediaQuery.viewInsetsOf(context).bottom > 0 ||
               path == AppRoutes.createTask;
+          final palette = ZivoPalette.of(context);
           return Scaffold(
+            backgroundColor: palette.canvas,
             extendBody: !desktop && !hideDock,
-            // One hub FAB — no top banner, no duplicate Speak/Describe stack.
-            floatingActionButton: desktop
-                ? null
-                : A11yHubFab(
-                    screenHint:
-                        'Zivo ${isHelper ? 'helper' : 'client'} screen at $path',
-                  ),
-            floatingActionButtonLocation:
-                FloatingActionButtonLocation.endFloat,
+            // No floating Access button on mobile — it covered Track / Accept / Top up.
             body: Row(
               children: [
-                desktop
-                    ? DesktopSidebar(
-                        isHelper: isHelper,
-                        selectedIndex: selectedIndex,
-                        destinations: _navigationItems(isHelper),
-                        onDestinationSelected: (index) =>
-                            _onNavTap(index, isHelper),
-                        screenHint:
-                            'Zivo ${isHelper ? 'helper' : 'client'} screen at $path',
-                      )
-                    : const SizedBox.shrink(),
+                if (desktop)
+                  A11yLandmark.navigation(
+                    label: isHelper
+                        ? 'Helper workspace navigation'
+                        : 'Client workspace navigation',
+                    child: DesktopSidebar(
+                      isHelper: isHelper,
+                      selectedIndex: selectedIndex,
+                      destinations: _navigationItems(isHelper)
+                          .where((d) =>
+                              d.label !=
+                              context.watch<LocaleCubit>().t('nav.account'))
+                          .toList(),
+                      onDestinationSelected: (index) =>
+                          _onNavTap(index, isHelper),
+                      screenHint:
+                          'Zivo ${isHelper ? 'helper' : 'client'} screen at $path',
+                    ),
+                  ),
                 Expanded(
-                  child: AppViewport(
-                    child: _buildBodyContent(isHelper, widget.child),
+                  child: A11yLandmark.main(
+                    label: isHelper ? 'Helper main content' : 'Client main content',
+                    child: AppViewport(
+                      child: _buildBodyContent(isHelper, widget.child),
+                    ),
                   ),
                 ),
               ],
             ),
-            bottomNavigationBar:
-                hideDock ? null : _buildBottomNav(isHelper, modeState, selectedIndex),
+            bottomNavigationBar: hideDock
+                ? null
+                : A11yLandmark.navigation(
+                    label: 'Primary mobile navigation',
+                    child: _buildBottomNav(isHelper, modeState, selectedIndex),
+                  ),
           );
         },
       ),
@@ -213,22 +225,50 @@ class _ShellScreenState extends State<ShellScreen> {
     );
   }
 
-  List<AppNavDestination> _navigationItems(bool isHelper) => isHelper
+  List<AppNavDestination> _navigationItems(bool isHelper) {
+    final l = context.watch<LocaleCubit>();
+    return isHelper
         ? [
-            const AppNavDestination(icon: Icons.map_outlined, activeIcon: Icons.map, label: 'Jobs'),
-            const AppNavDestination(icon: Icons.work_outline, activeIcon: Icons.work, label: 'Active'),
-            const AppNavDestination(icon: Icons.account_balance_wallet_outlined, activeIcon: Icons.account_balance_wallet, label: 'Earnings'),
-            const AppNavDestination(icon: Icons.person_outline, activeIcon: Icons.person, label: 'Account'),
+            AppNavDestination(
+                icon: Icons.map_outlined,
+                activeIcon: Icons.map,
+                label: l.t('nav.jobs')),
+            AppNavDestination(
+                icon: Icons.work_outline,
+                activeIcon: Icons.work,
+                label: l.t('nav.active')),
+            AppNavDestination(
+                icon: Icons.account_balance_wallet_outlined,
+                activeIcon: Icons.account_balance_wallet,
+                label: l.t('wallet.earningsTitle')),
+            AppNavDestination(
+                icon: Icons.person_outline,
+                activeIcon: Icons.person,
+                label: l.t('nav.account')),
           ]
         : [
-            const AppNavDestination(icon: Icons.home_outlined, activeIcon: Icons.home_rounded, label: 'Home'),
-            const AppNavDestination(icon: Icons.receipt_long_outlined, activeIcon: Icons.receipt_long, label: 'My tasks'),
-            const AppNavDestination(icon: Icons.account_balance_wallet_outlined, activeIcon: Icons.account_balance_wallet, label: 'Wallet'),
-            const AppNavDestination(icon: Icons.person_outline, activeIcon: Icons.person, label: 'Account'),
+            AppNavDestination(
+                icon: Icons.home_outlined,
+                activeIcon: Icons.home_rounded,
+                label: l.t('nav.home')),
+            AppNavDestination(
+                icon: Icons.receipt_long_outlined,
+                activeIcon: Icons.receipt_long,
+                label: l.t('nav.myTasks')),
+            AppNavDestination(
+                icon: Icons.account_balance_wallet_outlined,
+                activeIcon: Icons.account_balance_wallet,
+                label: l.t('nav.wallet')),
+            AppNavDestination(
+                icon: Icons.person_outline,
+                activeIcon: Icons.person,
+                label: l.t('nav.account')),
           ];
+  }
 
   Widget _buildBottomNav(bool isHelper, ModeState modeState, int selectedIndex) {
     final items = _navigationItems(isHelper);
+    final palette = ZivoPalette.of(context);
     final reducedMotion = MediaQuery.disableAnimationsOf(context);
     return GlassDock(
       child: Row(
@@ -255,26 +295,40 @@ class _ShellScreenState extends State<ShellScreen> {
                         constraints: const BoxConstraints(minHeight: 56),
                         padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
                         decoration: BoxDecoration(
-                          color: isSelected ? AppColors.glassSelection : Colors.transparent,
+                          color: isSelected
+                              ? palette.glassSelection
+                              : Colors.transparent,
                           borderRadius: BorderRadius.circular(22),
                         ),
                         child: ExcludeSemantics(
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(isSelected ? item.activeIcon : item.icon,
-                                color: isSelected ? AppColors.helperAccent : AppColors.textSecondary,
-                                size: 23),
-                              const SizedBox(height: 4),
-                              Text(item.label,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: AppTextStyles.bodySmall.copyWith(
-                                  color: isSelected ? AppColors.helperAccent : AppColors.textSecondary,
-                                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                                  fontSize: 12,
-                                  height: 1.2,
-                                  letterSpacing: -0.15,
+                              Icon(
+                                isSelected ? item.activeIcon : item.icon,
+                                color: isSelected
+                                    ? palette.accent
+                                    : palette.textSecondary,
+                                size: 22,
+                              ),
+                              const SizedBox(height: 3),
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  item.label,
+                                  maxLines: 1,
+                                  softWrap: false,
+                                  style: AppTextStyles.bodySmall.copyWith(
+                                    color: isSelected
+                                        ? palette.accent
+                                        : palette.textSecondary,
+                                    fontWeight: isSelected
+                                        ? FontWeight.w700
+                                        : FontWeight.w500,
+                                    fontSize: 11,
+                                    height: 1.1,
+                                    letterSpacing: -0.1,
+                                  ),
                                 ),
                               ),
                             ],
@@ -288,6 +342,7 @@ class _ShellScreenState extends State<ShellScreen> {
             );
           }),
           const SizedBox(width: 6),
+          // Always-visible Client ↔ Helper switch on mobile dock.
           ModeToggleWidget(isHelper: isHelper),
         ],
       ),
@@ -296,9 +351,15 @@ class _ShellScreenState extends State<ShellScreen> {
 
   void _onNavTap(int index, bool isHelper) async {
     if (index == 3) {
-      if (!await requireAuth(context, returnTo: AppRoutes.account)) return;
+      // After login, open client home — not Account. Signed-in users go Account.
+      final wasGuest = context.read<AuthBloc>().state is! AuthAuthenticated;
+      if (!await requireAuth(context, returnTo: AppRoutes.shell)) return;
       if (!mounted) return;
-      context.go(AppRoutes.account);
+      if (wasGuest) {
+        context.go(AppRoutes.shell);
+      } else {
+        context.go(AppRoutes.account);
+      }
       return;
     }
     if (isHelper) {
@@ -324,7 +385,8 @@ class _ShellScreenState extends State<ShellScreen> {
           );
           return;
         }
-        context.go('/job/${activeTask.id}/active');
+        // Push so Shell stays under Active Job — back returns to helper home.
+        context.push('/job/${activeTask.id}/active');
       } else if (index == 2) {
         if (!await requireAuth(context, returnTo: AppRoutes.wallet)) return;
         if (!mounted) return;

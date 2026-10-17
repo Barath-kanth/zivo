@@ -26,27 +26,11 @@ class WalletSubscribeRequested extends WalletEvent {
   List<Object?> get props => [userId];
 }
 
-class WalletNewEntryReceived extends WalletEvent {
-  const WalletNewEntryReceived(this.entry);
-  final WalletLedgerEntry entry;
-  @override
-  List<Object?> get props => [entry];
-}
-
-/// Credit helper earnings after End OTP / job complete (local UI update).
-class WalletCreditHelperEarnings extends WalletEvent {
-  const WalletCreditHelperEarnings({
-    required this.userId,
-    required this.taskId,
-    required this.amount,
-    required this.taskTitle,
-  });
+class WalletRefreshQuietly extends WalletEvent {
+  const WalletRefreshQuietly(this.userId);
   final String userId;
-  final String taskId;
-  final double amount;
-  final String taskTitle;
   @override
-  List<Object?> get props => [userId, taskId, amount, taskTitle];
+  List<Object?> get props => [userId];
 }
 
 class WalletUnsubscribeRequested extends WalletEvent {}
@@ -87,16 +71,15 @@ class WalletLoaded extends WalletState {
     );
   }
 
+  /// Append a ledger row for UI only — never invent balance deltas here.
+  /// Server `/me` balances are the source of truth (see [WalletFetchRequested]).
   WalletLoaded copyWithNewEntry(WalletLedgerEntry newEntry) {
-    final credited = newEntry.entryType == LedgerType.escrowReleaseToHelper;
+    if (entries.any((e) => e.id == newEntry.id)) return this;
+    if (newEntry.amount <= 0) return this;
     return WalletLoaded(
       walletBalance: walletBalance,
-      escrowBalance: escrowBalance > newEntry.amount && credited
-          ? (escrowBalance - newEntry.amount).clamp(0, double.infinity)
-          : escrowBalance,
-      helperEarnings: credited
-          ? helperEarnings + newEntry.amount
-          : helperEarnings,
+      escrowBalance: escrowBalance,
+      helperEarnings: helperEarnings,
       entries: [newEntry, ...entries],
     );
   }
@@ -118,15 +101,13 @@ class WalletBloc extends Bloc<WalletEvent, WalletState> {
       : _walletRepository = walletRepository,
         super(WalletInitial()) {
     on<WalletFetchRequested>(_onFetch);
+    on<WalletRefreshQuietly>(_onRefreshQuietly);
     on<WalletSubscribeRequested>(_onSubscribe);
     on<WalletUnsubscribeRequested>(_onUnsubscribe);
-    on<WalletNewEntryReceived>(_onNewEntry);
-    on<WalletCreditHelperEarnings>(_onCreditHelperEarnings);
   }
 
   final WalletRepository _walletRepository;
   SubscriptionHandle? _channel;
-  final Set<String> _creditedTaskIds = {};
 
   static const WalletLoaded _emptyLoaded = WalletLoaded(
     walletBalance: 0,
@@ -141,55 +122,46 @@ class WalletBloc extends Bloc<WalletEvent, WalletState> {
   ) async {
     emit(WalletLoading());
     try {
-      final balances = await _walletRepository.getWalletBalances(event.userId);
-      final entries =
-          await _walletRepository.getLedgerEntries(userId: event.userId);
-
-      emit(WalletLoaded(
-        walletBalance: balances?.walletBalance ?? 0.0,
-        escrowBalance: balances?.escrowBalance ?? 0.0,
-        helperEarnings: balances?.helperEarnings ?? 0.0,
-        entries: entries,
-      ));
+      emit(await _loadWallet(event.userId));
     } catch (e) {
       emit(_emptyLoaded);
     }
   }
 
-  Future<void> _onCreditHelperEarnings(
-    WalletCreditHelperEarnings event,
+  /// Background poll — keep current UI, replace balances from server.
+  Future<void> _onRefreshQuietly(
+    WalletRefreshQuietly event,
     Emitter<WalletState> emit,
   ) async {
-    if (event.amount <= 0) return;
-    if (_creditedTaskIds.contains(event.taskId)) return;
-    _creditedTaskIds.add(event.taskId);
+    try {
+      emit(await _loadWallet(event.userId));
+    } catch (_) {
+      /* keep last good state */
+    }
+  }
 
-    final current = state is WalletLoaded
-        ? state as WalletLoaded
-        : _emptyLoaded;
-
-    final entry = WalletLedgerEntry(
-      id: 'led-${DateTime.now().millisecondsSinceEpoch}',
-      userId: event.userId,
-      taskId: event.taskId,
-      entryType: LedgerType.escrowReleaseToHelper,
-      amount: event.amount,
-      balanceAfter: current.helperEarnings + event.amount,
-      description:
-          'Task "${event.taskTitle}" completed — +LKR ${event.amount.toStringAsFixed(2)} earnings',
-      createdAt: DateTime.now(),
+  Future<WalletLoaded> _loadWallet(String userId) async {
+    final balances = await _walletRepository.getWalletBalances(userId);
+    final entries =
+        await _walletRepository.getLedgerEntries(userId: userId);
+    // Hide zero-amount noise (e.g. unused goods = 0).
+    final visible = entries.where((e) => e.amount > 0).toList();
+    return WalletLoaded(
+      walletBalance: balances?.walletBalance ?? 0.0,
+      escrowBalance: balances?.escrowBalance ?? 0.0,
+      helperEarnings: balances?.helperEarnings ?? 0.0,
+      entries: visible,
     );
-
-    emit(current.copyWithNewEntry(entry));
   }
 
   Future<void> _onSubscribe(
     WalletSubscribeRequested event,
     Emitter<WalletState> emit,
   ) async {
+    _channel?.cancel();
     _channel = _walletRepository.subscribeToWalletUpdates(
       userId: event.userId,
-      onNewEntry: (entry) => add(WalletNewEntryReceived(entry)),
+      onRefresh: () => add(WalletRefreshQuietly(event.userId)),
     );
   }
 
@@ -200,15 +172,6 @@ class WalletBloc extends Bloc<WalletEvent, WalletState> {
     if (_channel != null) {
       _walletRepository.unsubscribe(_channel!);
       _channel = null;
-    }
-  }
-
-  Future<void> _onNewEntry(
-    WalletNewEntryReceived event,
-    Emitter<WalletState> emit,
-  ) async {
-    if (state is WalletLoaded) {
-      emit((state as WalletLoaded).copyWithNewEntry(event.entry));
     }
   }
 

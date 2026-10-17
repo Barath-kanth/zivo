@@ -238,7 +238,7 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
     TaskAccept event,
     Emitter<TaskState> emit,
   ) async {
-    emit(TaskLoading());
+    // Never emit TaskLoading here — that blanked the Jobs feed for ~40s.
     Task? owned;
     for (final t in [..._localNearbyTasks, ..._localClientTasks]) {
       if (t.id == event.taskId) {
@@ -250,6 +250,9 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
       emit(const TaskFailure(
         'You cannot accept a task you posted. Switch to another account or wait for a helper.',
       ));
+      if (state is! TaskNearbyLoaded) {
+        emit(TaskNearbyLoaded(_openNearbyOnly()));
+      }
       return;
     }
     if (event.taskId.startsWith('task-demo-')) {
@@ -288,31 +291,55 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
       }
       return;
     }
+
+    // Optimistic: Active tab + navigate immediately; confirm with API after.
+    final snapshot = List<Task>.from(_localNearbyTasks);
+    Task? optimistic;
+    if (owned != null) {
+      optimistic = owned.copyWith(
+        status: TaskStatus.matched,
+        helperId: event.helperId,
+        matchedAt: DateTime.now(),
+      );
+      _helperActiveTask = optimistic;
+      _localNearbyTasks.removeWhere((t) => t.id == event.taskId);
+      emit(TaskAccepted(optimistic));
+      emit(TaskNearbyLoaded(_openNearbyOnly()));
+    }
+
     try {
       final task = await _taskRepository.acceptTask(
         taskId: event.taskId,
         helperId: event.helperId,
-      );
+      ).timeout(const Duration(seconds: 12));
       _helperActiveTask = task;
-      emit(TaskAccepted(task));
-      // Refresh open nearby feed (keep _helperActiveTask — Active tab uses it)
+      // Soft refresh — no loading spinner
       try {
-        final nearby = await _taskRepository.getNearbyOpenTasks();
+        final nearby = await _taskRepository
+            .getNearbyOpenTasks()
+            .timeout(const Duration(seconds: 8));
         _localNearbyTasks
           ..clear()
           ..addAll(nearby);
         emit(TaskNearbyLoaded(_openNearbyOnly(nearby)));
       } catch (_) {
-        emit(TaskNearbyLoaded(const []));
+        if (state is! TaskNearbyLoaded) {
+          emit(TaskNearbyLoaded(_openNearbyOnly()));
+        }
       }
     } catch (e) {
+      // Roll back optimistic accept so Active is not stuck on a failed job.
+      if (optimistic != null) {
+        _helperActiveTask = null;
+        _localNearbyTasks
+          ..clear()
+          ..addAll(snapshot);
+      }
       final msg = e.toString().replaceFirst('Exception: ', '');
       emit(TaskFailure(msg));
-      // Restore Jobs feed so Accept failure does not blank the list
-      try {
-        final nearby = await _taskRepository.getNearbyOpenTasks();
-        emit(TaskNearbyLoaded(_openNearbyOnly(nearby)));
-      } catch (_) {}
+      emit(TaskNearbyLoaded(_openNearbyOnly(
+        optimistic != null ? snapshot : null,
+      )));
     }
   }
 
@@ -323,7 +350,10 @@ class TaskBloc extends Bloc<TaskEvent, TaskState> {
     Emitter<TaskState> emit,
   ) async {
     try {
-      final cancelled = await _taskRepository.cancelTask(event.taskId);
+      final cancelled = await _taskRepository.cancelTask(
+        event.taskId,
+        reason: event.reason,
+      );
       add(TaskRealtimeUpdated(cancelled));
     } catch (e) {
       emit(TaskFailure(e.toString()));

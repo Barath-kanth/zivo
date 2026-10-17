@@ -325,13 +325,132 @@ class TaskRepository {
     );
   }
 
+  /// Speak → understand → split, one server call (replaces suggestFromVoice + planTaskBundle).
+  Future<Map<String, dynamic>> voicePlan({
+    required List<int> audioBytes,
+    String lang = 'auto',
+    String filename = 'clip.webm',
+    String contentType = 'audio/webm',
+  }) {
+    return _api.postMultipart(
+      '/tasks/voice-plan',
+      fields: {'lang': lang},
+      fileBytes: audioBytes,
+      fileField: 'audio',
+      filename: filename,
+      contentType: contentType,
+    );
+  }
+
+  // ── Ability-aware work ──────────────────────────────────────────────────
+
+  Future<void> saveAbilityProfile({
+    required List<String> abilities,
+    required bool disclose,
+    required String note,
+  }) async {
+    await _api.patchJson('/me', {
+      'abilities': abilities,
+      'disclose_access': disclose,
+      'access_note': note,
+    });
+  }
+
+  Future<Map<String, dynamic>> abilityFit(String taskId) =>
+      _api.getJson('/tasks/$taskId/ability-fit');
+
+  Future<Map<String, dynamic>> adaptBrief(String taskId, {String lang = 'en'}) =>
+      _api.postJson('/tasks/$taskId/adapt-brief', {'lang': lang});
+
+  Future<Task> declineHelper(String taskId, {String? reason}) async {
+    final data = await _api.postJson('/tasks/$taskId/decline-helper', {
+      if (reason != null) 'reason': reason,
+    });
+    return Task.fromJson(Map<String, dynamic>.from(data['task'] as Map));
+  }
+
+  /// Zivo Eyes: mode = describe | read | match.
+  Future<Map<String, dynamic>> zivoEyes({
+    required List<int> imageBytes,
+    required String mode,
+    String lang = 'en',
+    List<String> items = const [],
+    String? hint,
+  }) {
+    return _api.postMultipart(
+      '/a11y/eyes',
+      fields: {
+        'mode': mode,
+        'lang': lang,
+        if (items.isNotEmpty) 'items': jsonEncode(items),
+        if (hint != null) 'hint': hint,
+      },
+      fileBytes: imageBytes,
+      fileField: 'image',
+      filename: 'eyes.jpg',
+    );
+  }
+
+  Future<Map<String, dynamic>> doorstepTalk({
+    required List<int> audioBytes,
+    String lang = 'en',
+  }) {
+    return _api.postMultipart(
+      '/a11y/doorstep',
+      fields: {'lang': lang},
+      fileBytes: audioBytes,
+      fileField: 'audio',
+      filename: 'clip.webm',
+      contentType: 'audio/webm',
+    );
+  }
+
+  /// Entrance photo → stairs/ramp/door note (does not attach to a task).
+  Future<Map<String, dynamic>> accessAudit({
+    required List<int> imageBytes,
+    String lang = 'en',
+    String? hint,
+  }) {
+    return _api.postMultipart(
+      '/a11y/access-audit',
+      fields: {
+        'lang': lang,
+        if (hint != null) 'hint': hint,
+      },
+      fileBytes: imageBytes,
+      fileField: 'image',
+      filename: 'entrance.jpg',
+    );
+  }
+
+  /// Client: attach an access audit to a posted task so helpers see it.
+  Future<Map<String, dynamic>> attachAccessAudit({
+    required String taskId,
+    required List<int> imageBytes,
+    String lang = 'en',
+    String? hint,
+  }) {
+    return _api.postMultipart(
+      '/tasks/$taskId/access-audit',
+      fields: {
+        'lang': lang,
+        if (hint != null) 'hint': hint,
+      },
+      fileBytes: imageBytes,
+      fileField: 'image',
+      filename: 'entrance.jpg',
+    );
+  }
+
   /// One problem → several related task drafts.
   Future<Map<String, dynamic>> planTaskBundle({
     required String problem,
     String? categoryHint,
+    String lang = 'auto',
   }) {
     return _api.postJson('/tasks/plan', {
       'problem': problem,
+      'lang': lang,
       if (categoryHint != null && categoryHint.isNotEmpty)
         'category_hint': categoryHint,
     });
@@ -512,10 +631,36 @@ class TaskRepository {
     return Task.fromJson(Map<String, dynamic>.from(data['task'] as Map));
   }
 
-  Future<Task> cancelTask(String taskId) async {
+  Future<Task> cancelTask(String taskId, {required String reason}) async {
+    final res = await _api.postJson('/tasks/$taskId/cancel', {
+      'reason': reason,
+    });
+    final raw = res['task'];
+    if (raw is Map) {
+      return Task.fromJson(Map<String, dynamic>.from(raw));
+    }
     final task = await getTaskById(taskId);
     if (task == null) throw Exception('Task not found');
-    return task.copyWith(status: TaskStatus.cancelled);
+    return task.copyWith(
+      status: TaskStatus.cancelled,
+      disputeReason: reason,
+    );
+  }
+
+  Future<Task> editTask({
+    required String taskId,
+    String? title,
+    String? description,
+  }) async {
+    final res = await _api.patchJson('/tasks/$taskId', {
+      if (title != null) 'title': title,
+      if (description != null) 'description': description,
+    });
+    final raw = res['task'];
+    if (raw is Map) {
+      return Task.fromJson(Map<String, dynamic>.from(raw));
+    }
+    throw Exception('Edit failed');
   }
 
   Future<void> saveShoppingList({
@@ -602,14 +747,17 @@ class TaskRepository {
   }
 
   /// In-app task chat (client ↔ assigned helper). Persisted on the server.
+  /// Pass [lang] so the API returns `display_body` in the viewer's language.
   Future<Map<String, dynamic>> getTaskChat(
     String taskId, {
     String? afterIso,
+    String? lang,
   }) {
     return _api.getJson(
       '/tasks/$taskId/chat',
       query: {
         if (afterIso != null && afterIso.isNotEmpty) 'after': afterIso,
+        if (lang != null && lang.isNotEmpty) 'lang': lang,
       },
     );
   }
@@ -617,8 +765,66 @@ class TaskRepository {
   Future<Map<String, dynamic>> sendTaskChatMessage({
     required String taskId,
     required String body,
+    String? lang,
+    bool viaVoice = false,
   }) {
-    return _api.postJson('/tasks/$taskId/chat', {'body': body});
+    return _api.postJson('/tasks/$taskId/chat', {
+      'body': body,
+      if (lang != null && lang.isNotEmpty) 'lang': lang,
+      if (viaVoice) 'via_voice': true,
+    });
+  }
+
+  Future<int> getTaskChatUnread(String taskId) async {
+    final data = await _api.getJson('/tasks/$taskId/chat/unread');
+    final n = data['unread_count'];
+    if (n is int) return n;
+    if (n is num) return n.toInt();
+    return int.tryParse('$n') ?? 0;
+  }
+
+  Future<void> markTaskChatRead(String taskId) async {
+    await _api.postJson('/tasks/$taskId/chat/read', {});
+  }
+
+  Future<Map<String, dynamic>> syncPreferredLang(String lang) {
+    return _api.patchJson('/me', {'preferred_lang': lang});
+  }
+
+  Future<Map<String, dynamic>> impactSummary() {
+    return _api.getJson('/impact/summary', auth: false);
+  }
+
+  Future<Map<String, dynamic>> resilienceStatus({
+    required double lat,
+    required double lon,
+  }) {
+    return _api.getJson(
+      '/resilience/status',
+      query: {'lat': '$lat', 'lon': '$lon'},
+      auth: false,
+    );
+  }
+
+  Future<Map<String, dynamic>> runConcierge({
+    required String utterance,
+    String? lang,
+    double? lat,
+    double? lon,
+  }) {
+    return _api.postJson('/agent/concierge', {
+      'utterance': utterance,
+      if (lang != null) 'lang': lang,
+      if (lat != null) 'lat': lat,
+      if (lon != null) 'lon': lon,
+    });
+  }
+
+  Future<Map<String, dynamic>> cloudTts({
+    required String text,
+    String lang = 'en',
+  }) {
+    return _api.postJson('/a11y/tts', {'text': text, 'lang': lang});
   }
 
   /// Gemini Trust Arbitrator — verdict from chat + timeline + vouch (+ receipt).
@@ -642,7 +848,8 @@ class TaskRepository {
     required String taskId,
     required void Function(Map<String, dynamic>) onUpdate,
   }) {
-    final timer = Timer.periodic(const Duration(seconds: 8), (_) async {
+    // 2s so client sees completion proof almost immediately after helper submit.
+    final timer = Timer.periodic(const Duration(seconds: 2), (_) async {
       try {
         final t = await getTaskById(taskId);
         if (t != null) {
@@ -651,6 +858,13 @@ class TaskRepository {
         }
       } catch (_) {}
     });
+    // Immediate first tick — don't wait for the first interval.
+    () async {
+      try {
+        final t = await getTaskById(taskId);
+        if (t != null) onUpdate(t.toJson());
+      } catch (_) {}
+    }();
     return SubscriptionHandle(timer.cancel);
   }
 

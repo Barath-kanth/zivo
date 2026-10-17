@@ -3,6 +3,7 @@ import 'package:equatable/equatable.dart';
 import 'package:hyperlocal/core/errors/app_exception.dart';
 import 'package:hyperlocal/data/repositories/auth_repository.dart';
 import 'package:hyperlocal/data/models/user_profile.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -45,25 +46,68 @@ class ModeHelperBlocked extends ModeState {
 // ── Cubit ─────────────────────────────────────────────────────────────────────
 
 class ModeCubit extends Cubit<ModeState> {
-  ModeCubit({required AuthRepository authRepository})
-      : _authRepository = authRepository,
+  ModeCubit({
+    required AuthRepository authRepository,
+    void Function(UserProfile profile)? onProfileUpdated,
+  })  : _authRepository = authRepository,
+        _onProfileUpdated = onProfileUpdated,
         super(ModeToggling());
 
   final AuthRepository _authRepository;
+  final void Function(UserProfile profile)? _onProfileUpdated;
 
-  void initFromProfile(UserProfile profile) {
+  /// Local UI workspace — independent of cold-start so a new browser session
+  /// lands on Client, while refresh restores the last workspace.
+  static const workspacePrefsKey = 'zivo_workspace_mode';
+  static const workspaceHelper = 'helper';
+  static const workspaceClient = 'client';
+
+  Future<String?> _readWorkspacePref() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(workspacePrefsKey);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _writeWorkspacePref(String value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(workspacePrefsKey, value);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  Future<void> clearWorkspacePref() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(workspacePrefsKey);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  /// Restore UI mode from local preference (default: Client on first open).
+  Future<void> initFromProfile(UserProfile profile) async {
     if (profile.isGuest) {
       emit(const GuestClientMode());
       return;
     }
-    if (profile.isHelperActive) {
+    final saved = await _readWorkspacePref();
+    final wantHelper = saved == workspaceHelper;
+    if (wantHelper && profile.canActivateHelper) {
       emit(HelperMode(profile));
     } else {
       emit(ClientMode(profile));
     }
   }
 
-  void initGuest() => emit(const GuestClientMode());
+  void initGuest() {
+    clearWorkspacePref();
+    emit(const GuestClientMode());
+  }
 
   Future<void> toggleMode() async {
     final currentState = state;
@@ -105,15 +149,18 @@ class ModeCubit extends Cubit<ModeState> {
         isHelperActive: targetIsHelper,
       );
 
-      if (updatedProfile == null) {
-        emit(targetIsHelper ? ClientMode(profile) : HelperMode(profile));
-        return;
-      }
+      final next = updatedProfile ??
+          profile.copyWith(isHelperActive: targetIsHelper);
+
+      await _writeWorkspacePref(
+        targetIsHelper ? workspaceHelper : workspaceClient,
+      );
+      _onProfileUpdated?.call(next);
 
       if (targetIsHelper) {
-        emit(HelperMode(updatedProfile));
+        emit(HelperMode(next));
       } else {
-        emit(ClientMode(updatedProfile));
+        emit(ClientMode(next));
       }
     } on AuthException {
       emit(ClientMode(profile));
@@ -121,6 +168,18 @@ class ModeCubit extends Cubit<ModeState> {
     } catch (e) {
       emit(targetIsHelper ? ClientMode(profile) : HelperMode(profile));
       rethrow;
+    }
+  }
+
+  /// Ensure helper workspace without flipping client→helper if already helper.
+  /// Used by Active Job back navigation.
+  Future<void> ensureHelperWorkspace() async {
+    if (state is HelperMode) {
+      await _writeWorkspacePref(workspaceHelper);
+      return;
+    }
+    if (state is ClientMode || state is ModeHelperBlocked) {
+      await toggleMode();
     }
   }
 

@@ -1,5 +1,5 @@
 import { useMockAi, gcpProjectId } from '../config.js';
-import { generateGeminiJson } from '../gemini.js';
+import { generateGeminiMultimodalJson } from '../gemini.js';
 
 export type SafetyInput = {
   title: string;
@@ -19,6 +19,8 @@ export type SafetyResult = {
   confidence?: number;
   reasoning?: string;
   action?: 'allow' | 'block' | 'review';
+  /** True when Gemini was unreachable and only the lexicon screened the text. */
+  degraded?: boolean;
   /** Demo beat: naive keyword filter vs Gemini. */
   keyword_filter?: {
     allowed: boolean;
@@ -43,6 +45,39 @@ export function naiveKeywordFilter(text: string): {
   return { allowed: matched.length === 0, matched };
 }
 
+/**
+ * Layer 1 — deterministic multilingual lexicon (en / ta / si + Singlish).
+ * Explicit terms only. It is the floor that still works when Vertex is
+ * rate-limited or down; euphemisms ("don't ask what's inside…") are Gemini's job.
+ */
+const LEXICON: Array<{ id: string; re: RegExp }> = [
+  {
+    id: 'illegal_drugs',
+    re: /\b(weed|ganja|cannabis|marijuana|cocaine|heroin|meth|mdma|lsd|opium|kasippu)\b|கஞ்சா|ஹெராயின்|கொகைன்|போதைப்?\s?பொருள்|ගංජා|ගංජ|හෙරොයින්|කොකේන්|මත්ද්‍රව්‍ය|කසිප්පු/i,
+  },
+  {
+    id: 'weapons',
+    re: /\b(guns?|pistols?|rifles?|firearms?|explosives?|bombs?|grenades?)\b|துப்பாக்கி|வெடிகுண்டு|குண்டு\s?வாங்க|තුවක්කු|පිස්තෝල|බෝම්බ/i,
+  },
+  {
+    id: 'forgery',
+    re: /fake\s+(id|nic|passport|licen[cs]e|document|certificate)|forged|போலி\s?(அடையாள|ஆவண|சான்றிதழ்|கடவுச்சீட்டு)|ව්‍යාජ\s?(හැඳුනුම්|ලේඛන|සහතික|විදේශ)/i,
+  },
+  {
+    id: 'cash_mule',
+    re: /money.?mule|cash.?mule|(ATM|ஏடிஎம்|ඒටීඑම්)[\s\S]{0,80}(PIN|பின்|පින්)|(PIN|பின்|පින්)[\s\S]{0,80}(ATM|ஏடிஎம்|ඒටීඑම්)/i,
+  },
+  {
+    id: 'secret_handoff_en',
+    re: /no questions( asked)?|don'?t ask what('?s| is) (inside|in it)|do not ask what('?s| is) (inside|in it)/i,
+  },
+];
+
+export function lexiconCheck(text: string): { hit: boolean; matched: string[] } {
+  const matched = LEXICON.filter((p) => p.re.test(text)).map((p) => p.id);
+  return { hit: matched.length > 0, matched };
+}
+
 type GeminiSafetyJson = {
   risk_category: string;
   confidence: number;
@@ -65,6 +100,12 @@ IMPORTANT:
 ACTION RULES (strict):
 - Use action=block (NOT review) when euphemisms imply illicit handoff / cash-mule / "no questions" packages,
   even if no explicit illegal keyword appears. Keyword filters miss these — you must not.
+- This applies in EVERY language, including Tamil and Sinhala (native script and romanised): a request to carry or hand over a
+  sealed package / envelope / parcel while the helper is told not to look inside, not to ask, or to keep it secret, especially with
+  bonus or "double" pay, is block.
+- Never be more lenient because the text is not English. Low-resource languages are where harm slips through.
+- Do NOT block benign chores that merely contain alarming words (knife set, gas cylinder, medicine, a child's school pickup) —
+  those are allow.
 - Use action=review only for ambiguous ordinary chores with mild odd phrasing.
 - Use action=allow for clear neighborhood help (groceries upstairs, queue pickup, tutoring, etc.).
 
@@ -131,11 +172,22 @@ export async function checkTaskSafety(input: SafetyInput): Promise<SafetyResult>
     return mockGeminiStructured(input, keyword);
   }
 
+  const lex = lexiconCheck(text);
+
   try {
-    const g = await generateGeminiJson<GeminiSafetyJson>(buildPrompt(input));
-    const action = g.action === 'allow' || g.action === 'block' || g.action === 'review'
-      ? g.action
-      : 'review';
+    // Stronger model than the default flash-lite: Tamil/Sinhala euphemisms need it.
+    const g = await generateGeminiMultimodalJson<GeminiSafetyJson>({
+      prompt: buildPrompt(input),
+      model: process.env.SAFETY_MODEL?.trim() || 'gemini-2.5-flash',
+      thinkingBudget: 0, // classification, not reasoning: keep latency ≈1 s
+    });
+    let action: 'allow' | 'block' | 'review' =
+      g.action === 'allow' || g.action === 'block' || g.action === 'review'
+        ? g.action
+        : 'review';
+    // Defense in depth: an explicit lexicon hit can only tighten, never loosen.
+    if (lex.hit) action = 'block';
+    if (lex.hit && !g.reasoning) g.reasoning = 'This request isn’t allowed on Zivo';
     // Only hard-block. "review" is soft — Instant Dispatch / ordinary chores
     // must not fail with a generic "Blocked by safety policy" false positive.
     const allowed = action !== 'block';
@@ -154,11 +206,22 @@ export async function checkTaskSafety(input: SafetyInput): Promise<SafetyResult>
       reasoning: g.reasoning,
       action,
     };
-  } catch {
-    const fallback = mockGeminiStructured(input, keyword);
+  } catch (err) {
+    console.error('[safety] Gemini unavailable, lexicon-only fallback', err instanceof Error ? err.message.slice(0, 160) : err);
+    const fallback = mockGeminiStructured(input, {
+      allowed: keyword.allowed && !lex.hit,
+      matched: [...keyword.matched, ...lex.matched],
+    });
     return {
       ...fallback,
       mode: 'mock',
+      degraded: true,
+      // No model verdict → never silently "allow" with a cheerful reason.
+      action: fallback.action === 'block' ? 'block' : 'review',
+      reasoning:
+        fallback.action === 'block'
+          ? fallback.reasoning
+          : 'Automated check was unavailable; request passes basic screening.',
       reasons: fallback.reasons.map((r) =>
         r.replace(/\bgemini\b/gi, 'safety').replace(/\bvernacular classifier\b/gi, 'check'),
       ),

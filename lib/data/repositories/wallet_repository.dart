@@ -35,15 +35,15 @@ class WalletRepository {
         .toList();
   }
 
+  /// Poll for balance + ledger refresh. Do **not** invent incremental
+  /// earnings from the latest ledger row — that caused Helper Earned /
+  /// Escrow to drift every tick.
   SubscriptionHandle subscribeToWalletUpdates({
     required String userId,
-    required void Function(WalletLedgerEntry) onNewEntry,
+    required void Function() onRefresh,
   }) {
-    final timer = Timer.periodic(const Duration(seconds: 10), (_) async {
-      try {
-        final entries = await getLedgerEntries(userId: userId, limit: 1);
-        if (entries.isNotEmpty) onNewEntry(entries.first);
-      } catch (_) {}
+    final timer = Timer.periodic(const Duration(seconds: 12), (_) {
+      onRefresh();
     });
     return SubscriptionHandle(timer.cancel);
   }

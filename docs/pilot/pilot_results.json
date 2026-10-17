@@ -1,0 +1,251 @@
+{
+  "label": "SIMULATED RUN — personas are invented; no real neighbours took part.",
+  "started": "2026-10-14T17:58:09.846Z",
+  "ended": "2026-10-14T18:03:13.942Z",
+  "api": "https://zivo-api-ihp5vjzpsa-el.a.run.app",
+  "personas": [
+    {
+      "persona": "Kamala",
+      "age": 74,
+      "lang": "ta",
+      "area": "Wellawatte, Colombo",
+      "needs": "lives alone, climbing stairs is hard",
+      "concierge": {
+        "status": 200,
+        "mode": "gemini",
+        "reply_lang": "ta",
+        "reply": "உங்களுக்கு மருந்துக்கடைக்கு சென்று மருந்து வாங்கி வர 30 நிமிடங்களுக்குள் உதவி தேவைப்படும். மாடிப்படி ஏற முடியாததால், இது ஒரு அவசரப் பணியாகக் கருதப்படுகிறது. உங்களுக்கு உதவ 1110 முதல் 2160 LKR வரை ஆகலாம்.",
+        "draft_category": "groceryRun",
+        "safety_allowed": true
+      },
+      "weather": {
+        "status": 200,
+        "mode": "live",
+        "hazard": "watch",
+        "precip_mm_24h": 18
+      },
+      "quote": {
+        "status": 200,
+        "labor_lkr": 2770
+      }
+    },
+    {
+      "persona": "Nimal",
+      "age": 68,
+      "lang": "si",
+      "area": "Peradeniya, Kandy",
+      "needs": "clinic visit, poor eyesight",
+      "concierge": {
+        "status": 200,
+        "mode": "gemini",
+        "reply_lang": "si",
+        "reply": "මම හෙට අක්ෂි රෝහලට ප්‍රවාහනය සංවිධානය කිරීමට ඔබට උදව් කරන්නෙමි. ඇස්තමේන්තුගත පිරිවැය රුපියල් 4600 ත් 8930 ත් අතර වේ.",
+        "draft_category": "hospitalCompanion",
+        "safety_allowed": true
+      },
+      "weather": {
+        "status": 200,
+        "mode": "live",
+        "hazard": "watch",
+        "precip_mm_24h": 20
+      },
+      "quote": {
+        "status": 200,
+        "labor_lkr": 4840
+      }
+    },
+    {
+      "persona": "Fathima",
+      "age": 41,
+      "lang": "en",
+      "area": "Maradana, Colombo",
+      "needs": "works shifts, mother at home",
+      "concierge": {
+        "status": 200,
+        "mode": "fallback",
+        "reply_lang": "en",
+        "reply": "I can help with that. Fair helper pay about LKR 2080. Weather note: watch — priority normal. Shall I prepare the request?",
+        "draft_category": "errandRun",
+        "safety_allowed": true
+      },
+      "weather": {
+        "status": 200,
+        "mode": "live",
+        "hazard": "watch",
+        "precip_mm_24h": 16.1
+      },
+      "quote": {
+        "status": 200,
+        "labor_lkr": 7500
+      }
+    },
+    {
+      "persona": "Ruwan",
+      "age": 33,
+      "lang": "si",
+      "area": "Galle Fort",
+      "needs": "new flat, heavy furniture",
+      "concierge": {
+        "status": 200,
+        "mode": "fallback",
+        "reply_lang": "si",
+        "reply": "මට ඒක කරන්න උදව් කරන්න පුළුවන්. සාධාරණ සහායක වැටුප රුපියල් 3530 ක් පමණ. කාලගුණ සටහන: අවධානයෙන් සිටින්න — ප්‍රමුඛතාව සාමාන්‍යයි. මම ඉල්ලීම සූදානම් කරන්නද?",
+        "draft_category": "movingHelp",
+        "safety_allowed": true
+      },
+      "weather": {
+        "status": 200,
+        "mode": "live",
+        "hazard": "watch",
+        "precip_mm_24h": 16.4
+      },
+      "quote": {
+        "status": 200,
+        "labor_lkr": 6250
+      }
+    },
+    {
+      "persona": "Priya",
+      "age": 29,
+      "lang": "ta",
+      "area": "Nallur, Jaffna",
+      "needs": "son needs maths help",
+      "concierge": {
+        "status": 200,
+        "mode": "fallback",
+        "reply_lang": "ta",
+        "reply": "நான் அதற்கு உதவ முடியும். நியாயமான உதவியாளர் ஊதியம் சுமார் LKR 1530. வானிலை குறிப்பு: கவனிக்கவும் — முன்னுரிமை சாதாரணமானது. நான் கோரிக்கையைத் தயாரிக்கவா?",
+        "draft_category": "errandRun",
+        "safety_allowed": true
+      },
+      "weather": {
+        "status": 200,
+        "mode": "live",
+        "hazard": "watch",
+        "precip_mm_24h": 15
+      },
+      "quote": {
+        "status": 200,
+        "labor_lkr": 3360
+      }
+    },
+    {
+      "persona": "Dilani",
+      "age": 52,
+      "lang": "si",
+      "area": "Narahenpita, Colombo",
+      "needs": "cannot stand long",
+      "concierge": {
+        "status": 200,
+        "mode": "fallback",
+        "reply_lang": "si",
+        "reply": "මට ඒක කරන්න උදව් කරන්න පුළුවන්. සාධාරණ සහායක වැටුප රුපියල් 1860ක් පමණ. කාලගුණ සටහන: අවධානයෙන් සිටින්න — ප්‍රමුඛතාව සාමාන්‍යයි. මම ඉල්ලීම සූදානම් කරන්නද?",
+        "draft_category": "queueStanding",
+        "safety_allowed": true
+      },
+      "weather": {
+        "status": 200,
+        "mode": "live",
+        "hazard": "watch",
+        "precip_mm_24h": 16.1
+      },
+      "quote": {
+        "status": 200,
+        "labor_lkr": 4610
+      }
+    },
+    {
+      "persona": "Arun",
+      "age": 36,
+      "lang": "en",
+      "area": "Negombo",
+      "needs": "wheelchair user",
+      "concierge": {
+        "status": 200,
+        "mode": "gemini",
+        "reply_lang": "en",
+        "reply": "I can help you with that. The estimated cost is between 1450 LKR and 2810 LKR.",
+        "draft_category": "groceryRun",
+        "safety_allowed": true
+      },
+      "weather": {
+        "status": 200,
+        "mode": "live",
+        "hazard": "calm",
+        "precip_mm_24h": 13.2
+      },
+      "quote": {
+        "status": 200,
+        "labor_lkr": 1740
+      }
+    },
+    {
+      "persona": "Seetha",
+      "age": 61,
+      "lang": "ta",
+      "area": "Batticaloa",
+      "needs": "dialysis appointments",
+      "concierge": {
+        "status": 200,
+        "mode": "fallback",
+        "reply_lang": "ta",
+        "reply": "මට ඒක කරන්න උදව් කරන්න පුළුවන්. සාධාරණ සහායක වැටුප රුපියල් 2110 ක් පමණ වේ. මම ඉල්ලීම සූදානම් කරන්නද?",
+        "draft_category": "hospitalCompanion",
+        "safety_allowed": true
+      },
+      "weather": {
+        "status": 200,
+        "mode": "live",
+        "hazard": "calm",
+        "precip_mm_24h": 10.9
+      },
+      "quote": {
+        "status": 200,
+        "labor_lkr": 5000
+      }
+    }
+  ],
+  "synthetic_event_count": 14,
+  "impact_summary_simulated_only": {
+    "source": "simulated",
+    "simulated_events": 42,
+    "events": 42,
+    "safety_blocks": 1,
+    "xlang_messages": 8,
+    "batches_joined": 5,
+    "trips_saved_estimate": 5,
+    "co2e_kg_estimate": 1.5,
+    "wage_floor_protections": 8,
+    "resilience_alerts": 12,
+    "assumptions": [
+      "Each street-batch join ≈ 1 avoided solo helper trip",
+      "Average avoided trip distance ≈ 2.5 km (Colombo neighbourhood hop)",
+      "Emission factor ≈ 0.12 kg CO₂e / km (small petrol motorcycle)",
+      "Wage-floor events count Gemini quotes that rejected undercuts",
+      "Events stream to Pub/Sub topic zivo-events; mirrored in Firestore impact_events for free-tier demos"
+    ],
+    "bigquery_dataset": "zivo_impact",
+    "pubsub_topic": "zivo-events"
+  },
+  "impact_summary_all": {
+    "source": "all",
+    "simulated_events": 42,
+    "events": 277,
+    "safety_blocks": 1,
+    "xlang_messages": 9,
+    "batches_joined": 5,
+    "trips_saved_estimate": 5,
+    "co2e_kg_estimate": 1.5,
+    "wage_floor_protections": 11,
+    "resilience_alerts": 198,
+    "assumptions": [
+      "Each street-batch join ≈ 1 avoided solo helper trip",
+      "Average avoided trip distance ≈ 2.5 km (Colombo neighbourhood hop)",
+      "Emission factor ≈ 0.12 kg CO₂e / km (small petrol motorcycle)",
+      "Wage-floor events count Gemini quotes that rejected undercuts",
+      "Events stream to Pub/Sub topic zivo-events; mirrored in Firestore impact_events for free-tier demos"
+    ],
+    "bigquery_dataset": "zivo_impact",
+    "pubsub_topic": "zivo-events"
+  }
+}

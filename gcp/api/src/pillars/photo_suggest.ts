@@ -25,6 +25,10 @@ export const PHOTO_SUGGEST_CATEGORIES = [
   'photography',
   'homeRepair',
   'other',
+  'phoneCheckIn',
+  'readingAloud',
+  'remoteTutoring',
+  'sightedAssist',
 ] as const;
 
 export type PhotoSuggestCategory = (typeof PHOTO_SUGGEST_CATEGORIES)[number];
@@ -83,6 +87,10 @@ const LABELS: Record<PhotoSuggestCategory, string> = {
   eventHelp: 'Event Help',
   photography: 'Photography',
   homeRepair: 'Home Repair',
+  phoneCheckIn: 'Phone check-in',
+  readingAloud: 'Reading aloud',
+  remoteTutoring: 'Remote tutoring',
+  sightedAssist: 'Sighted assist (60 s)',
   other: 'Other',
 };
 

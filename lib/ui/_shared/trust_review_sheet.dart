@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gap/gap.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
+import 'package:hyperlocal/core/constants/zivo_palette.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/utils/speak_text.dart';
 import 'package:hyperlocal/data/repositories/task_repository.dart';
@@ -21,7 +22,7 @@ Future<void> showTrustReviewSheet(
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
-    backgroundColor: AppColors.backgroundDark,
+    backgroundColor: ZivoPalette.of(context).card,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
     ),
@@ -77,17 +78,25 @@ Future<void> showTrustReviewSheet(
                       width: 40,
                       height: 4,
                       decoration: BoxDecoration(
-                        color: AppColors.borderColor,
+                        color: ZivoPalette.of(ctx).border,
                         borderRadius: BorderRadius.circular(99),
                       ),
                     ),
                   ),
                   const Gap(14),
-                  Text('Trust Arbitrator', style: AppTextStyles.headingMedium),
+                  Text(
+                    'Trust Arbitrator',
+                    style: AppTextStyles.headingMedium.copyWith(
+                      color: ZivoPalette.of(ctx).textPrimary,
+                    ),
+                  ),
                   const Gap(4),
                   Text(
                     'Reviews chat, timeline, neighbor vouch, and purchase signals — then can hold escrow. Not a generic ticket form.',
-                    style: AppTextStyles.bodySmall.copyWith(height: 1.35),
+                    style: AppTextStyles.bodySmall.copyWith(
+                      height: 1.35,
+                      color: ZivoPalette.of(ctx).textSecondary,
+                    ),
                   ),
                   const Gap(14),
                   TextField(
@@ -182,7 +191,7 @@ Future<void> showTrustReviewSheet(
                             Text(
                               'Evidence: ${(result!['evidence_used'] as List).join(' · ')}',
                               style: AppTextStyles.bodySmall.copyWith(
-                                color: AppColors.textMuted,
+                                color: ZivoPalette.of(ctx).textMuted,
                                 fontSize: 11,
                               ),
                             ),

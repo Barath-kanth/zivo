@@ -50,3 +50,14 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+node_modules/
+
+# Local demo/video assets — not for competition repo
+docs/demo_shots/
+docs/video_screenshots/
+docs/video_upload/
+docs/deck/img/
+docs/DEMO_VOICEOVER.txt
+docs/DEMO_SCRIPT_PREVIOUS.md
+UI_VIDEO_REDESIGN.md
+scripts/capture-demo-shots.mjs

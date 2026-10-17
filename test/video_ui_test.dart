@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hyperlocal/core/l10n/locale_cubit.dart';
 import 'package:hyperlocal/core/constants/app_theme.dart';
 import 'package:hyperlocal/data/models/task.dart';
 import 'package:hyperlocal/ui/_shared/helper_job_search.dart';
@@ -17,21 +19,24 @@ void main() {
       for (final helper in [false, true]) {
         var taps = 0;
         await tester.pumpWidget(
-          MaterialApp(
-            theme: AppTheme.light,
-            home: MediaQuery(
-              data: const MediaQueryData(
-                size: Size(320, 780),
-                textScaler: TextScaler.linear(2),
-              ),
-              child: Scaffold(
-                body: SingleChildScrollView(
-                  child: ModeCoverBanner(
-                    isHelper: helper,
-                    onModeTap: () {},
-                    onSearchTap: () => taps++,
-                    searchHint: 'Search services',
-                    trailing: const Icon(Icons.person_outline),
+          BlocProvider<LocaleCubit>(
+            create: (_) => LocaleCubit(),
+            child: MaterialApp(
+              theme: AppTheme.light,
+              home: MediaQuery(
+                data: const MediaQueryData(
+                  size: Size(320, 780),
+                  textScaler: TextScaler.linear(2),
+                ),
+                child: Scaffold(
+                  body: SingleChildScrollView(
+                    child: ModeCoverBanner(
+                      isHelper: helper,
+                      onModeTap: () {},
+                      onSearchTap: () => taps++,
+                      searchHint: 'Search services',
+                      trailing: const Icon(Icons.person_outline),
+                    ),
                   ),
                 ),
               ),

@@ -9,6 +9,11 @@ import {
   gcpProjectId,
 } from './config.js';
 import { refreshPhotoUrls } from './uploads.js';
+import { accessCardFor } from './pillars/abilities.js';
+import {
+  cacheTaskSnapshot,
+  readCachedTaskSnapshot,
+} from './redis_cache.js';
 
 export type Skill = 'none' | 'driving' | 'care' | 'tutoring';
 
@@ -49,6 +54,13 @@ export type UserProfile = {
   role_intent: string;
   guidelines_accepted_at?: string;
   password_hash?: string;
+  preferred_lang?: 'en' | 'si' | 'ta';
+  /** Opt-in ability profile (visual|hearing|speech|mobility|cognitive). Private unless disclose_access. */
+  abilities?: string[];
+  /** Helper chose to tell clients, so they can hire or decline knowingly. */
+  disclose_access?: boolean;
+  /** Helper's own words to clients. */
+  access_note?: string;
 };
 
 export type VouchRow = {
@@ -94,7 +106,17 @@ export type TaskRow = {
   created_at: string;
   photo_urls?: string[];
   photo_paths?: string[];
-  helper?: { full_name: string; avatar_url?: string; rating_as_helper: number };
+  helper?: {
+    full_name: string;
+    avatar_url?: string;
+    rating_as_helper: number;
+    /** Only present when the helper opted to disclose. */
+    access?: { abilities: string[]; note?: string };
+  };
+  /** Helpers the client declined after seeing their access card (cannot re-accept). */
+  declined_helper_ids?: string[];
+  /** Entrance access audit (stairs/ramp/door) for helpers. */
+  access_audit?: Record<string, unknown>;
   /** Street-batch linkage (Pillar 3). */
   batch_id?: string;
   batch_anchor?: boolean;
@@ -172,6 +194,17 @@ export type ChatMessage = {
   sender_id: string;
   sender_role: 'client' | 'helper' | 'system';
   body: string;
+  /** Exact text the sender typed (never overwritten by translation). */
+  body_original?: string;
+  source_lang?: 'en' | 'si' | 'ta';
+  translations?: Partial<Record<'en' | 'si' | 'ta', string>>;
+  /** Viewer-facing body — always the sender's original language. */
+  display_body?: string;
+  /** Optional translation into the viewer's lang (tap to reveal). */
+  translation_body?: string;
+  translated?: boolean;
+  /** True when the sender used voice → transcript (same safety path as text). */
+  via_voice?: boolean;
   created_at: string;
 };
 
@@ -183,6 +216,9 @@ export type ChatThread = {
   last_message_at?: string;
   last_preview?: string;
   message_count: number;
+  /** WhatsApp-style read cursors — unread badge for the other party. */
+  client_last_read_at?: string;
+  helper_last_read_at?: string;
 };
 
 type Session = { token: string; userId: string; expiresAt: number };
@@ -265,12 +301,45 @@ async function allUsers(): Promise<UserProfile[]> {
 async function saveTask(t: TaskRow) {
   if (useMemory) {
     memTasks.set(t.id, t);
-    return;
+  } else {
+    await firestore().collection('tasks').doc(t.id).set(t, { merge: true });
   }
-  await firestore().collection('tasks').doc(t.id).set(t, { merge: true });
+  // Hot cache so clients see proof / OTP updates in ~1–2s without waiting on
+  // a cold Firestore round-trip (Redis when REDIS_URL is set, else memory).
+  void cacheTaskSnapshot(t.id, t as unknown as Record<string, unknown>);
+}
+
+/** Persist an access-audit result on a task (client booker only — enforced in route). */
+export async function attachTaskAccessAudit(
+  taskId: string,
+  audit: Record<string, unknown>,
+): Promise<TaskRow> {
+  const task = await loadTask(taskId);
+  if (!task) throw new Error('Task not found');
+  task.access_audit = audit;
+  await saveTask(task);
+  return (await loadTask(taskId))!;
+}
+
+async function withFreshPhotoUrls(task: TaskRow): Promise<TaskRow> {
+  let next = task;
+  if (task.photo_paths?.length) {
+    next = { ...next, photo_urls: await refreshPhotoUrls(task.photo_paths) };
+  }
+  if (task.proof_photo_paths?.length) {
+    next = {
+      ...next,
+      proof_photo_urls: await refreshPhotoUrls(task.proof_photo_paths),
+    };
+  }
+  return next;
 }
 
 async function loadTask(id: string): Promise<TaskRow | undefined> {
+  const cached = await readCachedTaskSnapshot(id);
+  if (cached && typeof cached.id === 'string') {
+    return withFreshPhotoUrls(cached as unknown as TaskRow);
+  }
   let task: TaskRow | undefined;
   if (useMemory) {
     task = memTasks.get(id);
@@ -279,10 +348,9 @@ async function loadTask(id: string): Promise<TaskRow | undefined> {
     task = snap.exists ? (snap.data() as TaskRow) : undefined;
   }
   if (!task) return undefined;
-  if (task.photo_paths?.length) {
-    task = { ...task, photo_urls: await refreshPhotoUrls(task.photo_paths) };
-  }
-  return task;
+  const fresh = await withFreshPhotoUrls(task);
+  void cacheTaskSnapshot(fresh.id, fresh as unknown as Record<string, unknown>);
+  return fresh;
 }
 
 async function allTasks(): Promise<TaskRow[]> {
@@ -293,13 +361,7 @@ async function allTasks(): Promise<TaskRow[]> {
     const snap = await firestore().collection('tasks').get();
     rows = snap.docs.map((d) => d.data() as TaskRow);
   }
-  return Promise.all(
-    rows.map(async (t) =>
-      t.photo_paths?.length
-        ? { ...t, photo_urls: await refreshPhotoUrls(t.photo_paths) }
-        : t,
-    ),
-  );
+  return Promise.all(rows.map((t) => withFreshPhotoUrls(t)));
 }
 
 function scrubDemoDisplayName(name: string): string {
@@ -881,7 +943,7 @@ export async function listOpenTasks(
   /** When set, hide tasks posted by this user (cannot help on your own job). */
   excludeClientId?: string,
 ) {
-  return (await allTasks())
+  const ranked = (await allTasks())
     .filter((t) => t.status === 'open')
     .filter((t) => !excludeClientId || t.client_id !== excludeClientId)
     .map((t) => ({
@@ -893,6 +955,18 @@ export async function listOpenTasks(
     }))
     .filter((t) => t.distance_km <= DISPATCH_RADIUS_KM)
     .sort((a, b) => a.distance_km - b.distance_km);
+
+  // Collapse near-identical open jobs (same client + same title) so the feed
+  // stays elegant — keep the nearest / newest of each group.
+  const seen = new Set<string>();
+  const deduped: typeof ranked = [];
+  for (const t of ranked) {
+    const key = `${t.client_id}::${(t.title ?? '').trim().toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(t);
+  }
+  return deduped;
 }
 
 export async function acceptTask(taskId: string, helperId: string) {
@@ -910,12 +984,17 @@ export async function acceptTask(taskId: string, helperId: string) {
     await saveUser(helper);
   }
   if (task.status !== 'open') throw new Error('Task not open');
+  if (task.declined_helper_ids?.includes(helperId)) {
+    throw new Error('The client chose someone else for this job');
+  }
+  const access = accessCardFor(helper);
   task.status = 'matched';
   task.helper_id = helperId;
   task.helper = {
     full_name: helper.full_name,
     avatar_url: helper.avatar_url,
     rating_as_helper: helper.rating_as_helper,
+    ...(access ? { access } : {}),
   };
   await saveTask(task);
   try {
@@ -925,8 +1004,44 @@ export async function acceptTask(taskId: string, helperId: string) {
       task.id,
       `${helperName} accepted your job. Open Active Requests and tap “Send Start OTP in chat” when you’re ready — no need to read it aloud.`,
     );
+    if (access) {
+      await appendSystemChatMessage(
+        task.id,
+        `${helperName} shared an access note: they work with ${access.abilities.join(', ')} support from Zivo tools${access.note ? ` — “${access.note}”` : ''}. You can keep them, or choose someone else before the job starts (your money stays in escrow).`,
+      );
+    }
   } catch {
     /* chat is best-effort at match */
+  }
+  return task;
+}
+
+
+/**
+ * Client declines the matched helper before the job starts: task reopens, escrow stays held,
+ * that helper cannot re-accept. (Consent point for helpers who disclosed an access note.)
+ */
+export async function declineMatchedHelper(taskId: string, clientId: string, reason?: string) {
+  const task = await loadTask(taskId);
+  if (!task) throw new Error('Task not found');
+  if (task.client_id !== clientId) throw new Error('Only the booker can choose another helper');
+  if (task.status !== 'matched' || !task.helper_id) {
+    throw new Error('You can only choose someone else before the job has started');
+  }
+  const declined = new Set(task.declined_helper_ids ?? []);
+  declined.add(task.helper_id);
+  task.declined_helper_ids = [...declined];
+  task.status = 'open';
+  task.helper_id = undefined;
+  task.helper = undefined;
+  await saveTask(task);
+  try {
+    await appendSystemChatMessage(
+      task.id,
+      `The booker chose to look for someone else${reason ? ` (${reason.slice(0, 80)})` : ''}. The job is open again; your money is still held safely.`,
+    );
+  } catch {
+    /* best-effort */
   }
   return task;
 }
@@ -1138,6 +1253,9 @@ export type LiveHelper = {
   distance_km: number;
   rating_as_helper: number;
   presence_at?: string;
+  /** Live porch coordinates for the map (only when presence is on). */
+  lat: number;
+  lon: number;
 };
 
 /** Helpers with porch light ON inside walk radius. */
@@ -1165,6 +1283,8 @@ export async function listLiveHelpersNearby(
       ),
       rating_as_helper: u.rating_as_helper,
       presence_at: u.presence_at,
+      lat: u.presence_lat!,
+      lon: u.presence_lon!,
     }))
     .filter((h) => h.distance_km <= r)
     .sort((a, b) => a.distance_km - b.distance_km);
@@ -1434,6 +1554,60 @@ export async function patchTask(
   return t;
 }
 
+/** Client cancels before End OTP — refunds escrow hold to wallet. */
+export async function cancelClientTask(
+  taskId: string,
+  clientId: string,
+  reason?: string,
+): Promise<TaskRow> {
+  const task = await loadTask(taskId);
+  if (!task) throw new Error('Task not found');
+  if (task.client_id !== clientId) {
+    throw new Error('Only the task owner can cancel');
+  }
+  if (task.status === 'completed' || task.status === 'cancelled') {
+    throw new Error('Task is already finished');
+  }
+  if (task.status === 'in_progress' && task.proof_submitted_at) {
+    throw new Error(
+      'Proof already submitted — use Dispute or finish with End OTP',
+    );
+  }
+  const hold = (task.total_amount ?? 0) + (task.goods_budget ?? 0);
+  const client = await loadUser(clientId);
+  if (client && hold > 0) {
+    client.escrow_balance = Math.max(0, (client.escrow_balance ?? 0) - hold);
+    client.wallet_balance = (client.wallet_balance ?? 0) + hold;
+    await saveUser(client);
+  }
+  task.status = 'cancelled';
+  if (reason?.trim()) task.dispute_reason = reason.trim().slice(0, 400);
+  await saveTask(task);
+  return task;
+}
+
+/** Client edits title/description while still open (before Start OTP). */
+export async function editClientTask(
+  taskId: string,
+  clientId: string,
+  input: { title?: string; description?: string },
+): Promise<TaskRow> {
+  const task = await loadTask(taskId);
+  if (!task) throw new Error('Task not found');
+  if (task.client_id !== clientId) {
+    throw new Error('Only the task owner can edit');
+  }
+  if (task.status !== 'open' && task.status !== 'matched') {
+    throw new Error('Can only edit before the job starts');
+  }
+  if (input.title?.trim()) task.title = input.title.trim().slice(0, 120);
+  if (input.description?.trim()) {
+    task.description = input.description.trim().slice(0, 2000);
+  }
+  await saveTask(task);
+  return task;
+}
+
 export async function listHelperBatchRoute(helperId: string) {
   await expireStaleBatches();
   const tasks = await listHelperActiveTasks(helperId);
@@ -1597,6 +1771,58 @@ const HELPER_GEO_OFFSET: Record<string, { dLat: number; dLng: number }> = {
   h3: { dLat: 0.012, dLng: -0.004 }, // ~1.4 km — farther, clean history
 };
 
+/** Live dispute rows for match tools (not invented by the model). */
+export async function listDisputesForHelper(helperId: string): Promise<
+  Array<{ id: string; reason: string; status: string; daysAgo: number }>
+> {
+  const tasks = useMemory
+    ? [...memTasks.values()]
+    : (await firestore().collection('tasks').get()).docs.map((d) => d.data() as TaskRow);
+  const now = Date.now();
+  return tasks
+    .filter(
+      (t) =>
+        t.helper_id === helperId &&
+        (t.status === 'disputed' || Boolean((t as TaskRow & { disputed_at?: string }).disputed_at)),
+    )
+    .map((t) => {
+      const row = t as TaskRow & {
+        disputed_at?: string;
+        dispute_reason?: string;
+        trust_hold_reason?: string;
+      };
+      const at = Date.parse(row.disputed_at ?? t.created_at);
+      const daysAgo = Number.isFinite(at)
+        ? Math.max(0, Math.round((now - at) / 86_400_000))
+        : 0;
+      return {
+        id: t.id,
+        reason: (row.dispute_reason ?? row.trust_hold_reason ?? 'Dispute').slice(0, 160),
+        status: t.status === 'disputed' ? 'open' : 'resolved',
+        daysAgo,
+      };
+    });
+}
+
+/** Deterministic trust tier from vouches / rating / jobs — never from ability. */
+export function computeTrustTier(
+  helper: UserProfile,
+): 'gold' | 'silver' | 'bronze' {
+  const vouches = helper.vouch_count ?? 0;
+  const rating = helper.rating_as_helper ?? 0;
+  const helped = helper.total_tasks_helped ?? 0;
+  if (
+    helper.neighbor_vouched ||
+    (vouches >= VOUCH_THRESHOLD && rating >= 4.6 && helped >= 3)
+  ) {
+    return 'gold';
+  }
+  if (rating < 3.8 || (helped === 0 && vouches === 0)) {
+    return 'bronze';
+  }
+  return 'silver';
+}
+
 export async function helpersForMatch(task: TaskRow) {
   return (await allUsers())
     .filter(
@@ -1649,14 +1875,8 @@ function assertChatParticipant(task: TaskRow, userId: string): 'client' | 'helpe
 
 /** Keep coordination on-platform — redact phone numbers / off-app contact. */
 function sanitizeChatBody(raw: string): string {
-  return raw
-    .trim()
-    .slice(0, 2000)
-    .replace(/\b(?:whatsapp|telegram|viber|imo|signal)\b/gi, '[use in-app chat]')
-    .replace(
-      /(?:\+?\d[\d\s\-().]{7,}\d)/g,
-      '[contact hidden — use in-app chat]',
-    );
+  // Soft cleanup only — phones/apps are hard-blocked earlier by guardChatMessage.
+  return raw.trim().slice(0, 2000);
 }
 
 async function saveChatThread(t: ChatThread) {
@@ -1734,22 +1954,89 @@ export async function listChatMessagesInternal(
   return snap.docs.map((d) => d.data() as ChatMessage);
 }
 
+function chatUnreadFor(thread: ChatThread, messages: ChatMessage[], userId: string): number {
+  const isClient = thread.client_id === userId;
+  const cursor = isClient ? thread.client_last_read_at : thread.helper_last_read_at;
+  return messages.filter((m) => {
+    if (m.sender_id === userId) return false;
+    if (!cursor) return true;
+    return m.created_at > cursor;
+  }).length;
+}
+
 export async function listTaskChat(
   taskId: string,
   userId: string,
   afterIso?: string,
-): Promise<{ thread: ChatThread; messages: ChatMessage[] }> {
+  lang: 'en' | 'si' | 'ta' = 'en',
+): Promise<{
+  thread: ChatThread;
+  messages: ChatMessage[];
+  unread_count: number;
+}> {
   const task = await loadTask(taskId);
   if (!task) throw new Error('Task not found');
   assertChatParticipant(task, userId);
   const thread = await ensureTaskChat(taskId);
 
   let messages = await listChatMessagesInternal(taskId);
+  const unread_count = chatUnreadFor(thread, messages, userId);
   if (afterIso) {
     messages = messages.filter((m) => m.created_at > afterIso);
   }
 
-  return { thread, messages };
+  messages = messages.map((m) => {
+    const original = (m.body_original ?? m.body)?.toString() ?? '';
+    const translated = m.translations?.[lang]?.trim();
+    const hasAlt =
+      Boolean(translated) &&
+      Boolean(m.source_lang) &&
+      m.source_lang !== lang &&
+      translated !== original;
+    // Always show the sender's original language first; tap reveals translation.
+    return {
+      ...m,
+      body: original || m.body,
+      body_original: original || m.body_original,
+      display_body: original || translated || m.body,
+      translation_body: hasAlt ? translated : undefined,
+      translated: hasAlt,
+    };
+  });
+
+  return { thread, messages, unread_count };
+}
+
+/** Mark the thread read for this participant (clears WhatsApp-style badge). */
+export async function markTaskChatRead(
+  taskId: string,
+  userId: string,
+): Promise<{ unread_count: number }> {
+  const task = await loadTask(taskId);
+  if (!task) throw new Error('Task not found');
+  assertChatParticipant(task, userId);
+  const thread = await ensureTaskChat(taskId);
+  const now = new Date().toISOString();
+  if (thread.client_id === userId) {
+    thread.client_last_read_at = now;
+  } else {
+    thread.helper_last_read_at = now;
+  }
+  await saveChatThread(thread);
+  return { unread_count: 0 };
+}
+
+/** Lightweight unread count for badge polling (client + helper). */
+export async function getTaskChatUnread(
+  taskId: string,
+  userId: string,
+): Promise<{ unread_count: number }> {
+  const task = await loadTask(taskId);
+  if (!task) throw new Error('Task not found');
+  assertChatParticipant(task, userId);
+  const thread = await ensureTaskChat(taskId);
+  const messages = await listChatMessagesInternal(taskId);
+  return { unread_count: chatUnreadFor(thread, messages, userId) };
 }
 
 export async function appendSystemChatMessage(
@@ -1790,6 +2077,10 @@ export async function sendTaskChatMessage(input: {
   taskId: string;
   senderId: string;
   body: string;
+  body_original?: string;
+  source_lang?: 'en' | 'si' | 'ta';
+  translations?: Partial<Record<'en' | 'si' | 'ta', string>>;
+  via_voice?: boolean;
 }): Promise<ChatMessage> {
   const task = await loadTask(input.taskId);
   if (!task) throw new Error('Task not found');
@@ -1807,7 +2098,11 @@ export async function sendTaskChatMessage(input: {
     task_id: input.taskId,
     sender_id: input.senderId,
     sender_role: role,
-    body,
+    body: input.body_original?.trim() || body,
+    body_original: input.body_original?.trim() || body,
+    ...(input.source_lang ? { source_lang: input.source_lang } : {}),
+    ...(input.translations ? { translations: input.translations } : {}),
+    ...(input.via_voice ? { via_voice: true } : {}),
     created_at: now,
   };
 

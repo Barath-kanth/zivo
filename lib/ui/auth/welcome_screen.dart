@@ -8,7 +8,6 @@ import 'package:hyperlocal/core/constants/app_brand.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/router/app_router.dart';
-import 'package:hyperlocal/ui/_shared/a11y_widgets.dart';
 import 'package:hyperlocal/ui/_shared/zivo_logo.dart';
 
 /// Zevoa-style welcome gate before phone/email login.
@@ -102,8 +101,6 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   Widget build(BuildContext context) {
     final bottom = MediaQuery.paddingOf(context).bottom;
     final slide = _pages[_page];
-    final readText =
-        '${slide.title}. ${slide.body} Access Your Account to sign in. Signup if you are new.';
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -154,11 +151,6 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                 ],
               ),
               const Gap(10),
-              A11yAuthBar(
-                readText: readText,
-                hint:
-                    'Zivo welcome screen. Slide: ${slide.title}. Buttons: Access Your Account, Signup.',
-              ),
               Expanded(
                 child: PageView.builder(
                   controller: _pageController,

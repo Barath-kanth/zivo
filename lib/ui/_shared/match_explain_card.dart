@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:gap/gap.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
+import 'package:hyperlocal/core/constants/zivo_palette.dart';
 import 'package:hyperlocal/ui/_shared/a11y_widgets.dart';
 
 /// Strip Vertex / HTTP / JSON error tails from match explanations.
@@ -66,6 +67,8 @@ class _MatchExplainCardState extends State<MatchExplainCard> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = ZivoPalette.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final clean = sanitizeMatchExplanation(
       _plain ?? widget.explanation,
     );
@@ -85,9 +88,9 @@ class _MatchExplainCardState extends State<MatchExplainCard> {
       width: double.infinity,
       padding: EdgeInsets.all(compact ? 14 : 16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: palette.card,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.borderColor),
+        border: Border.all(color: palette.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -98,7 +101,9 @@ class _MatchExplainCardState extends State<MatchExplainCard> {
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: AppColors.brandGreenSoft,
+                  color: isDark
+                      ? AppColors.helperAccent.withValues(alpha: 0.22)
+                      : AppColors.brandGreenSoft,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: const Icon(
@@ -113,12 +118,15 @@ class _MatchExplainCardState extends State<MatchExplainCard> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      helperName == null || helperName!.isEmpty
+                      helperName == null || helperName.isEmpty
                           ? 'Explain my match'
-                          : 'Why ${helperName!.split(' ').first} fits',
-                      style: AppTextStyles.headingSmall.copyWith(fontSize: 15),
+                          : 'Why ${helperName.split(' ').first} fits',
+                      style: AppTextStyles.headingSmall.copyWith(
+                        fontSize: 15,
+                        color: palette.textPrimary,
+                      ),
                     ),
-                    if (mode != null && mode!.isNotEmpty)
+                    if (mode != null && mode.isNotEmpty)
                       Text(
                         mode == 'dispatch'
                             ? 'Instant Dispatch'
@@ -126,7 +134,7 @@ class _MatchExplainCardState extends State<MatchExplainCard> {
                                 ? 'AI-ranked match'
                                 : 'Constraint match',
                         style: AppTextStyles.bodySmall.copyWith(
-                          color: AppColors.textMuted,
+                          color: palette.textMuted,
                           fontSize: 11,
                         ),
                       ),
@@ -141,7 +149,7 @@ class _MatchExplainCardState extends State<MatchExplainCard> {
             style: AppTextStyles.bodyMedium.copyWith(
               fontSize: 13,
               height: 1.45,
-              color: AppColors.textPrimary,
+              color: palette.textPrimary,
             ),
           ),
           if (_bullets.isNotEmpty) ...[
@@ -149,7 +157,12 @@ class _MatchExplainCardState extends State<MatchExplainCard> {
             ..._bullets.map(
               (b) => Padding(
                 padding: const EdgeInsets.only(bottom: 2),
-                child: Text('• $b', style: AppTextStyles.bodySmall),
+                child: Text(
+                  '• $b',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: palette.textSecondary,
+                  ),
+                ),
               ),
             ),
           ],
@@ -173,7 +186,7 @@ class _MatchExplainCardState extends State<MatchExplainCard> {
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
-                color: const Color(0xFFFFF7E8),
+                color: AppColors.warningColor.withValues(alpha: isDark ? 0.16 : 0.1),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Row(
@@ -215,7 +228,9 @@ class _MatchExplainCardState extends State<MatchExplainCard> {
                         vertical: 6,
                       ),
                       decoration: BoxDecoration(
-                        color: AppColors.surfaceDark,
+                        color: isDark
+                            ? const Color(0xFF2A2A2A)
+                            : AppColors.surfaceDark,
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
@@ -223,7 +238,7 @@ class _MatchExplainCardState extends State<MatchExplainCard> {
                         style: AppTextStyles.bodySmall.copyWith(
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
-                          color: AppColors.textSecondary,
+                          color: palette.textSecondary,
                         ),
                       ),
                     ),
@@ -263,14 +278,16 @@ class MatchCandidateTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = ZivoPalette.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: palette.card,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: recommended ? AppColors.helperAccent : AppColors.borderColor,
+          color: recommended ? AppColors.helperAccent : palette.border,
           width: recommended ? 1.5 : 1,
         ),
       ),
@@ -281,12 +298,14 @@ class MatchCandidateTile extends StatelessWidget {
             children: [
               CircleAvatar(
                 radius: 20,
-                backgroundColor: AppColors.surfaceDark,
+                backgroundColor: isDark
+                    ? palette.accent.withValues(alpha: 0.22)
+                    : AppColors.surfaceDark,
                 child: Text(
                   name.isNotEmpty ? name[0].toUpperCase() : '?',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.w800,
-                    color: Colors.black,
+                    color: palette.textPrimary,
                   ),
                 ),
               ),
@@ -302,6 +321,7 @@ class MatchCandidateTile extends StatelessWidget {
                             name,
                             style: AppTextStyles.headingSmall.copyWith(
                               fontSize: 14,
+                              color: palette.textPrimary,
                             ),
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -314,7 +334,9 @@ class MatchCandidateTile extends StatelessWidget {
                               vertical: 2,
                             ),
                             decoration: BoxDecoration(
-                              color: AppColors.brandGreenSoft,
+                              color: isDark
+                                  ? AppColors.helperAccent.withValues(alpha: 0.22)
+                                  : AppColors.brandGreenSoft,
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Text(
@@ -335,7 +357,7 @@ class MatchCandidateTile extends StatelessWidget {
                       '${disputeCount != null && disputeCount! > 0 ? ' · $disputeCount dispute(s)' : ''}'
                       ' · score $score',
                       style: AppTextStyles.bodySmall.copyWith(
-                        color: AppColors.textMuted,
+                        color: palette.textMuted,
                         fontSize: 11,
                       ),
                     ),
@@ -363,7 +385,7 @@ class MatchCandidateTile extends StatelessWidget {
                             r,
                             style: AppTextStyles.bodySmall.copyWith(
                               fontSize: 12,
-                              color: AppColors.textSecondary,
+                              color: palette.textSecondary,
                             ),
                           ),
                         ),
@@ -379,9 +401,9 @@ class MatchCandidateTile extends StatelessWidget {
               child: ElevatedButton(
                 onPressed: hiring ? null : onHire,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.accent,
-                  foregroundColor: Colors.white,
-                  disabledBackgroundColor: AppColors.borderColor,
+                  backgroundColor: palette.accent,
+                  foregroundColor: palette.onAccent,
+                  disabledBackgroundColor: palette.border,
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -389,18 +411,18 @@ class MatchCandidateTile extends StatelessWidget {
                   elevation: 0,
                 ),
                 child: hiring
-                    ? const SizedBox(
+                    ? SizedBox(
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          color: Colors.white,
+                          color: palette.onAccent,
                         ),
                       )
                     : Text(
                         'Hire ${name.split(' ').first}',
                         style: AppTextStyles.buttonLabel.copyWith(
-                          color: Colors.white,
+                          color: palette.onAccent,
                         ),
                       ),
               ),

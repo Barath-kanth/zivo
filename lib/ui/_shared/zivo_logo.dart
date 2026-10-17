@@ -3,32 +3,41 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:hyperlocal/core/constants/app_brand.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
+import 'package:hyperlocal/core/constants/zivo_palette.dart';
 
 /// Zivo mark: a living “Z” path — helper → you — with a green pulse of arrival.
 ///
 /// Reads as motion + nearby help (route), not a generic letter badge.
+/// Wordmark / mark automatically flip for light vs dark theme.
 class ZivoLogo extends StatelessWidget {
   const ZivoLogo({
     super.key,
     this.size = 36,
     this.showWordmark = false,
     this.wordmarkColor,
-    this.markOnDark = false,
+    this.markOnDark,
   });
 
   final double size;
   final bool showWordmark;
   final Color? wordmarkColor;
-  final bool markOnDark;
+  /// When null, follows [Theme] brightness (dark → light mark tile + white type).
+  final bool? markOnDark;
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final onDark = markOnDark ?? isDark;
+    final palette = ZivoPalette.of(context);
+    final typeColor = wordmarkColor ??
+        (onDark ? palette.textPrimary : Colors.black);
+
     final mark = SizedBox(
       width: size,
       height: size,
       child: CustomPaint(
         painter: _ZivoMarkPainter(
-          onDark: markOnDark,
+          onDark: onDark,
           accent: AppColors.brandGreen,
         ),
       ),
@@ -48,8 +57,7 @@ class ZivoLogo extends StatelessWidget {
             fontSize: size * 0.56,
             fontWeight: FontWeight.w700,
             letterSpacing: -0.7,
-            color: wordmarkColor ??
-                (markOnDark ? Colors.white : Colors.black),
+            color: typeColor,
             height: 1,
           ),
         ),
@@ -70,17 +78,16 @@ class _ZivoMarkPainter extends CustomPainter {
     final cx = size.width / 2;
     final cy = size.height / 2;
 
+    // On dark UI: white tile + black Z so the mark pops; light UI: black tile.
     final bg = onDark ? Colors.white : Colors.black;
     final fg = onDark ? Colors.black : Colors.white;
 
-    // Soft app-icon tile
     final tile = RRect.fromRectAndRadius(
       Rect.fromCenter(center: Offset(cx, cy), width: s * 0.92, height: s * 0.92),
       Radius.circular(s * 0.24),
     );
     canvas.drawRRect(tile, Paint()..color = bg);
 
-    // Neighborhood radius (subtle arc) — “nearby”
     final ringPaint = Paint()
       ..color = (onDark ? Colors.black : Colors.white).withValues(alpha: 0.18)
       ..style = PaintingStyle.stroke
@@ -93,7 +100,6 @@ class _ZivoMarkPainter extends CustomPainter {
       ringPaint,
     );
 
-    // Living Z as a help route (start → diagonal → arrive)
     final z = Path()
       ..moveTo(cx - s * 0.22, cy - s * 0.2)
       ..lineTo(cx + s * 0.22, cy - s * 0.2)
@@ -108,20 +114,10 @@ class _ZivoMarkPainter extends CustomPainter {
       ..strokeJoin = StrokeJoin.round;
     canvas.drawPath(z, route);
 
-    // Green life pulse at destination (help arrived)
     final end = Offset(cx + s * 0.22, cy + s * 0.2);
-    canvas.drawCircle(
-      end,
-      s * 0.095,
-      Paint()..color = accent,
-    );
-    canvas.drawCircle(
-      end,
-      s * 0.045,
-      Paint()..color = fg,
-    );
+    canvas.drawCircle(end, s * 0.095, Paint()..color = accent);
+    canvas.drawCircle(end, s * 0.045, Paint()..color = fg);
 
-    // Origin node (helper leaving)
     final start = Offset(cx - s * 0.22, cy - s * 0.2);
     canvas.drawCircle(start, s * 0.055, Paint()..color = accent);
   }
@@ -165,6 +161,7 @@ class ZivoLogoHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final accent = ZivoPalette.of(context).accent;
     return SizedBox(
       width: size,
       height: size,
@@ -173,7 +170,7 @@ class ZivoLogoHero extends StatelessWidget {
         children: [
           CustomPaint(
             size: Size(size, size),
-            painter: _PulseRingPainter(color: AppColors.helperAccent),
+            painter: _PulseRingPainter(color: accent),
           ),
           ZivoMarkBadge(size: size * 0.72),
         ],

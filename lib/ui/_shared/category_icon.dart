@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
+import 'package:hyperlocal/core/constants/zivo_palette.dart';
 import 'package:hyperlocal/data/models/task.dart';
 
 /// Presentation-only icons. Task category identifiers stay unchanged.
 class CategoryIcon extends StatelessWidget {
-  const CategoryIcon(this.category,
-      {super.key, this.size = 28, this.color = AppColors.textPrimary});
+  const CategoryIcon(this.category, {super.key, this.size = 28, this.color});
 
   final TaskCategory category;
   final double size;
-  final Color color;
+  final Color? color;
 
   /// CC0 [3dicons.co](https://3dicons.co/) iso-color PNGs (transparent, no plate).
   static String assetPathFor(TaskCategory category) {
@@ -54,6 +54,12 @@ class CategoryIcon extends StatelessWidget {
         return 'assets/icons/3d/camera.png';
       case TaskCategory.homeRepair:
         return 'assets/icons/3d/tool.png';
+      case TaskCategory.phoneCheckIn:
+      case TaskCategory.readingAloud:
+      case TaskCategory.remoteTutoring:
+        return 'assets/icons/3d/chat.png';
+      case TaskCategory.sightedAssist:
+        return 'assets/icons/3d/camera.png';
       case TaskCategory.other:
         return 'assets/icons/3d/target.png';
     }
@@ -73,7 +79,7 @@ class CategoryIcon extends StatelessWidget {
   ];
 
   static List<TaskCategory> get mobileOverflow => TaskCategory.values
-      .where((c) => !mobilePrimary.contains(c))
+      .where((c) => !mobilePrimary.contains(c) && c != TaskCategory.other)
       .toList(growable: false);
 
   static IconData iconFor(TaskCategory category) {
@@ -118,6 +124,14 @@ class CategoryIcon extends StatelessWidget {
         return Icons.photo_camera_rounded;
       case TaskCategory.homeRepair:
         return Icons.handyman_rounded;
+      case TaskCategory.phoneCheckIn:
+        return Icons.phone_in_talk_rounded;
+      case TaskCategory.readingAloud:
+        return Icons.record_voice_over_rounded;
+      case TaskCategory.remoteTutoring:
+        return Icons.videocam_rounded;
+      case TaskCategory.sightedAssist:
+        return Icons.visibility_rounded;
       case TaskCategory.other:
         return Icons.apps_rounded;
     }
@@ -126,9 +140,12 @@ class CategoryIcon extends StatelessWidget {
   static bool usesSymbol(TaskCategory category) => const {
     TaskCategory.laundry, TaskCategory.tailoring, TaskCategory.homeCooking,
     TaskCategory.petCare, TaskCategory.elderCare, TaskCategory.driver,
+    TaskCategory.phoneCheckIn, TaskCategory.readingAloud,
+    TaskCategory.remoteTutoring, TaskCategory.sightedAssist,
   }.contains(category);
 
   static Color accentFor(TaskCategory category) {
+    // Mid-luminance accents — never near-black (vanishes on #000 / charcoal cards).
     switch (category) {
       case TaskCategory.groceryRun:
       case TaskCategory.gardening:
@@ -146,14 +163,33 @@ class CategoryIcon extends StatelessWidget {
         return const Color(0xFFE74C3C);
       case TaskCategory.tutoring:
       case TaskCategory.elderCare:
-        return const Color(0xFF8E44AD);
+      case TaskCategory.phoneCheckIn:
+      case TaskCategory.readingAloud:
+      case TaskCategory.remoteTutoring:
+        return const Color(0xFFB07CF0);
+      case TaskCategory.sightedAssist:
+        return const Color(0xFF2DD4BF);
+      case TaskCategory.laundry:
+        return const Color(0xFF60A5FA);
+      case TaskCategory.petCare:
+        return const Color(0xFFF472B6);
+      case TaskCategory.tailoring:
+        return const Color(0xFFC084FC);
+      case TaskCategory.babysitting:
+        return const Color(0xFFF9A8D4);
+      case TaskCategory.photography:
+      case TaskCategory.eventHelp:
+        return const Color(0xFFFBBF24);
+      case TaskCategory.documentWork:
+        return const Color(0xFF94A3B8);
       default:
-        return const Color(0xFF2C3E50);
+        return const Color(0xFF7DD3FC);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final ink = color ?? ZivoPalette.of(context).textPrimary;
     if (usesSymbol(category)) {
       return Icon(iconFor(category), size: size, color: accentFor(category));
     }
@@ -164,7 +200,7 @@ class CategoryIcon extends StatelessWidget {
       fit: BoxFit.contain,
       filterQuality: FilterQuality.medium,
       errorBuilder: (_, __, ___) =>
-          Icon(iconFor(category), size: size, color: color),
+          Icon(iconFor(category), size: size, color: ink),
     );
   }
 }
@@ -177,30 +213,35 @@ class CategoryIconBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final accent = CategoryIcon.accentFor(category);
     return SizedBox(
       width: size,
       height: size,
       child: CategoryIcon.usesSymbol(category)
           ? DecoratedBox(
               decoration: BoxDecoration(
-                color: CategoryIcon.accentFor(category).withValues(alpha: 0.08),
+                color: accent.withValues(alpha: isDark ? 0.28 : 0.12),
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: Icon(CategoryIcon.iconFor(category), size: size * 0.66,
-                color: CategoryIcon.accentFor(category)),
+              child: Icon(
+                CategoryIcon.iconFor(category),
+                size: size * 0.66,
+                color: accent,
+              ),
             )
           : Image.asset(
-        CategoryIcon.assetPathFor(category),
-        width: size,
-        height: size,
-        fit: BoxFit.contain,
-        filterQuality: FilterQuality.high,
-        errorBuilder: (_, __, ___) => Icon(
-          CategoryIcon.iconFor(category),
-          size: size * 0.7,
-          color: CategoryIcon.accentFor(category),
-        ),
-      ),
+              CategoryIcon.assetPathFor(category),
+              width: size,
+              height: size,
+              fit: BoxFit.contain,
+              filterQuality: FilterQuality.high,
+              errorBuilder: (_, __, ___) => Icon(
+                CategoryIcon.iconFor(category),
+                size: size * 0.7,
+                color: accent,
+              ),
+            ),
     );
   }
 }
@@ -224,7 +265,7 @@ class MoreIconBadge extends StatelessWidget {
         errorBuilder: (_, __, ___) => Icon(
           Icons.apps_rounded,
           size: size * 0.7,
-          color: AppColors.textPrimary,
+          color: ZivoPalette.of(context).textPrimary,
         ),
       ),
     );

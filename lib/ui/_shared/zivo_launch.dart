@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:hyperlocal/core/constants/app_colors.dart';
 import 'zivo_logo.dart';
 
 /// One opening reveal per app mount. The router stays mounted underneath,
@@ -14,6 +13,10 @@ class ZivoLaunch extends StatefulWidget {
 
 class _ZivoLaunchState extends State<ZivoLaunch>
     with SingleTickerProviderStateMixin {
+  /// Survives widget remounts (e.g. old locale-driven MaterialApp rebuilds)
+  /// so a white splash overlay never traps the UI again mid-session.
+  static bool _sessionReady = false;
+
   late final AnimationController _controller;
   bool _started = false;
   bool _finished = false;
@@ -21,11 +24,14 @@ class _ZivoLaunchState extends State<ZivoLaunch>
   @override
   void initState() {
     super.initState();
+    _finished = _sessionReady;
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1150),
+      value: _sessionReady ? 1 : 0,
     )..addStatusListener((status) {
         if (status == AnimationStatus.completed && mounted) {
+          _sessionReady = true;
           setState(() => _finished = true);
         }
       });
@@ -34,10 +40,16 @@ class _ZivoLaunchState extends State<ZivoLaunch>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (_finished || _sessionReady) {
+      _finished = true;
+      _sessionReady = true;
+      return;
+    }
     if (MediaQuery.disableAnimationsOf(context)) {
       _controller.stop();
       _finished = true;
-    } else if (!_started && !_finished) {
+      _sessionReady = true;
+    } else if (!_started) {
       _started = true;
       _controller.forward();
     }
@@ -78,7 +90,7 @@ class _ZivoLaunchState extends State<ZivoLaunch>
                     opacity: 1 - exit,
                     child: ColoredBox(
                       key: const ValueKey('zivo-launch-overlay'),
-                      color: AppColors.backgroundDark,
+                      color: Theme.of(context).scaffoldBackgroundColor,
                       child: Center(
                         child: ExcludeSemantics(
                           child: Opacity(
@@ -87,10 +99,11 @@ class _ZivoLaunchState extends State<ZivoLaunch>
                               offset: Offset(0, 8 * (1 - enter)),
                               child: Transform.scale(
                                 scale: 0.96 + 0.04 * enter,
-                                child: const ZivoLogo(
+                                child: ZivoLogo(
                                   size: 80,
                                   showWordmark: true,
-                                  wordmarkColor: AppColors.textPrimary,
+                                  wordmarkColor:
+                                      Theme.of(context).colorScheme.onSurface,
                                 ),
                               ),
                             ),

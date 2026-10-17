@@ -10,6 +10,7 @@ import 'package:go_router/go_router.dart';
 import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
 import 'package:hyperlocal/blocs/task/task_bloc.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
+import 'package:hyperlocal/core/constants/zivo_palette.dart';
 import 'package:hyperlocal/core/constants/app_config.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/router/app_router.dart';
@@ -22,19 +23,31 @@ import 'package:hyperlocal/data/models/task.dart';
 import 'package:hyperlocal/blocs/a11y/a11y_cubit.dart';
 import 'package:hyperlocal/ui/_shared/a11y_widgets.dart';
 import 'package:hyperlocal/ui/_shared/task_bundle_sheet.dart';
+import 'package:hyperlocal/ui/_shared/a11y_landmarks.dart';
+import 'package:hyperlocal/ui/_shared/zivo_live_map.dart';
 import 'package:hyperlocal/data/models/task_status.dart';
 import 'package:hyperlocal/data/repositories/profile_repository.dart';
 import 'package:hyperlocal/data/repositories/task_repository.dart';
 import 'package:hyperlocal/blocs/mode/mode_cubit.dart';
+import 'package:hyperlocal/core/l10n/locale_cubit.dart';
 import 'package:image_picker/image_picker.dart';
 
 /// Task creation — Uber-style category-first flow.
 /// Step 0: Pick category  →  Step 1: Describe  →  Step 2: Location  →  Step 3: Review & Post
 class TaskCreationScreen extends StatefulWidget {
-  const TaskCreationScreen({super.key, this.initialCategory});
+  const TaskCreationScreen({
+    super.key,
+    this.initialCategory,
+    this.initialTitle,
+    this.initialDescription,
+  });
 
-  /// When set (e.g. tapped from home grid), skip the category picker.
+  /// When set (e.g. tapped from home grid), pre-select that service on step 0.
   final TaskCategory? initialCategory;
+
+  /// Prefill from Voice helper "Post this request".
+  final String? initialTitle;
+  final String? initialDescription;
 
   @override
   State<TaskCreationScreen> createState() => _TaskCreationScreenState();
@@ -81,7 +94,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
   Map<String, dynamic>? _photoSuggestion;
   final Map<String, TextEditingController> _photoQuestionCtrls = {};
   bool _voiceListening = false;
-  String _voiceLang = 'en'; // en | ta | si
+  bool _voiceBusy = false; // stopping / understanding / splitting
 
   // Sri Lankan cities
   static const _cityPresets = [
@@ -119,27 +132,65 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       case TaskCategory.eventHelp:         return AppColors.catEvent;
       case TaskCategory.photography:       return AppColors.catPhoto;
       case TaskCategory.homeRepair:        return AppColors.catRepair;
-      case TaskCategory.other:             return AppColors.textMuted;
+      case TaskCategory.phoneCheckIn:
+      case TaskCategory.readingAloud:
+      case TaskCategory.remoteTutoring:    return AppColors.catTutoring;
+      case TaskCategory.sightedAssist:     return AppColors.catTech;
+      case TaskCategory.other:             return const Color(0xFF6B6B6B);
     }
   }
 
   Color get _catColor =>
-      _selectedCategory == null ? AppColors.accent : _colorFor(_selectedCategory!);
+      _selectedCategory == null ? AppColors.uberBlue : _colorFor(_selectedCategory!);
+
+  /// Interactive chrome that stays visible on pure-black dark canvas.
+  Color _ctaColor(BuildContext context) {
+    final palette = ZivoPalette.of(context);
+    if (Theme.of(context).brightness == Brightness.dark) {
+      return palette.accent;
+    }
+    final cat = _catColor;
+    return cat.computeLuminance() < 0.08 ? palette.accent : cat;
+  }
+
+  void _onRecordingChanged() {
+    if (!mounted) return;
+    // Keep Start/Stop in sync if max-duration auto-stops the mic.
+    if (!recordingListenable.value && _voiceListening && !_voiceBusy) {
+      setState(() => _voiceListening = false);
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+    recordingListenable.addListener(_onRecordingChanged);
     _titleCtrl.addListener(_recheckPolicy);
     _descCtrl.addListener(_recheckPolicy);
     final initial = widget.initialCategory;
+    final draftTitle = widget.initialTitle?.trim();
+    final draftDesc = widget.initialDescription?.trim();
+    final fromHelper =
+        (draftTitle != null && draftTitle.isNotEmpty) ||
+        (draftDesc != null && draftDesc.isNotEmpty);
     if (initial != null) {
       _selectedCategory = initial;
-      _step = 1;
+      // Voice-helper drafts skip the category picker and land on details.
+      _step = fromHelper ? 1 : 0;
       if (initial == TaskCategory.groceryRun ||
           initial == TaskCategory.errandRun) {
         _goodsBudget = 3000;
         _addShoppingItem();
       }
+    }
+    if (draftTitle != null && draftTitle.isNotEmpty) {
+      _titleCtrl.text = draftTitle;
+    } else if (fromHelper && draftDesc != null && draftDesc.isNotEmpty) {
+      _titleCtrl.text =
+          draftDesc.length > 60 ? '${draftDesc.substring(0, 57)}…' : draftDesc;
+    }
+    if (draftDesc != null && draftDesc.isNotEmpty) {
+      _descCtrl.text = draftDesc;
     }
   }
 
@@ -156,6 +207,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
 
   @override
   void dispose() {
+    recordingListenable.removeListener(_onRecordingChanged);
     _titleCtrl.removeListener(_recheckPolicy);
     _descCtrl.removeListener(_recheckPolicy);
     _titleCtrl.dispose();
@@ -436,27 +488,73 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
     });
   }
 
+  /// Voice agent: record → understand → automatically split into related jobs.
+  /// Speaks any language (no language chip) — model auto-detects.
   Future<void> _speakYourTask() async {
+    if (_voiceBusy) return;
     if (!await requireAuth(context, returnTo: AppRoutes.createTask)) return;
     if (!mounted) return;
 
-    // Toggle: Stop recording when already listening.
+    // Stop recording → understand → auto-split.
     if (_voiceListening || recordingListenable.value) {
-      setState(() => _voiceListening = true);
+      setState(() {
+        _voiceBusy = true;
+        _voiceListening = true;
+      });
       try {
         final clip = await stopVoiceRecording();
         if (!mounted) return;
-        final suggestion =
-            await context.read<TaskRepository>().suggestFromVoice(
-                  audioBytes: clip,
-                  lang: _voiceLang,
-                );
-        if (!mounted) return;
-        setState(() => _voiceListening = false);
-        await _applyVoiceOrPhotoDraft(suggestion, fromVoice: true);
+        if (clip == null || clip.isEmpty) {
+          setState(() {
+            _voiceListening = false;
+            _voiceBusy = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                context.read<LocaleCubit>().t('create.agentNeedMore'),
+              ),
+            ),
+          );
+          return;
+        }
+
+        // One server call (speak → understand → split). The planner opens at once with live
+        // progress; this screen fills its own title/description when the answer lands.
+        final repo = context.read<TaskRepository>();
+        final plan = repo.voicePlan(audioBytes: clip, lang: 'auto');
+        plan.then((suggestion) {
+          if (!mounted) return;
+          final title = suggestion['title']?.toString().trim() ?? '';
+          final description = suggestion['description']?.toString().trim() ?? '';
+          setState(() {
+            if (suggestion['category'] != null) {
+              _selectedCategory =
+                  TaskCategory.fromString(suggestion['category'].toString());
+            }
+            if (title.isNotEmpty) _titleCtrl.text = title;
+            if (description.isNotEmpty) _descCtrl.text = description;
+          });
+        }).catchError((_) {});
+
+        setState(() {
+          _voiceListening = false;
+          _voiceBusy = false;
+        });
+
+        await showTaskBundlePlanner(
+          context,
+          initialProblem: '',
+          categoryHint: _selectedCategory?.name,
+          autoPlan: true,
+          voicePlan: plan,
+        );
       } catch (e) {
         if (!mounted) return;
-        setState(() => _voiceListening = false);
+        setState(() {
+          _voiceListening = false;
+          _voiceBusy = false;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(humanizeError(e)),
@@ -467,22 +565,15 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       return;
     }
 
+    // Start recording.
     setState(() => _voiceListening = true);
     try {
-      await startVoiceRecording(maxDuration: const Duration(seconds: 30));
+      await startVoiceRecording(maxDuration: const Duration(seconds: 60));
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _voiceLang == 'ta'
-                ? 'Recording — speak in Tamil, then tap Stop recording'
-                : _voiceLang == 'si'
-                    ? 'Recording — speak in Sinhala, then tap Stop recording'
-                    : 'Recording — say what you need, then tap Stop recording',
-          ),
-          duration: const Duration(seconds: 8),
-        ),
-      );
+      // If the recorder auto-stopped (max duration), flip UI so Stop is usable.
+      if (!recordingListenable.value && _voiceListening) {
+        setState(() => _voiceListening = false);
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _voiceListening = false);
@@ -528,7 +619,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                     width: 40,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: AppColors.borderColor,
+                      color: ZivoPalette.of(context).border,
                       borderRadius: BorderRadius.circular(4),
                     ),
                   ),
@@ -546,7 +637,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                           ? explanation
                           : 'Review the draft, then apply.'),
                   style: AppTextStyles.bodySmall.copyWith(
-                    color: AppColors.textSecondary,
+                    color: ZivoPalette.of(context).textSecondary,
                   ),
                 ),
                 if (fromVoice && transcript.isNotEmpty) ...[
@@ -575,7 +666,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                   children: [
                     A11yReadButton(
                       text: '$title. $description',
-                      lang: _voiceLang,
+                      lang: context.read<LocaleCubit>().code,
                     ),
                     A11ySimplifyButton(
                       text: description,
@@ -618,7 +709,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
         _step = 1;
       });
       if (context.read<A11yCubit>().enabled) {
-        speakText('$title. $desc', lang: _voiceLang);
+        speakText('$title. $desc', lang: context.read<LocaleCubit>().code);
       }
       _loadPricingFields();
     }
@@ -714,7 +805,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                     width: 40,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: AppColors.borderColor,
+                      color: ZivoPalette.of(context).border,
                       borderRadius: BorderRadius.circular(4),
                     ),
                   ),
@@ -725,7 +816,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                 Text(
                   explanation,
                   style: AppTextStyles.bodyMedium.copyWith(
-                    color: AppColors.textSecondary,
+                    color: ZivoPalette.of(context).textSecondary,
                     fontSize: 13,
                   ),
                 ),
@@ -773,7 +864,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                               vertical: 6,
                             ),
                             decoration: BoxDecoration(
-                              color: AppColors.surfaceDark,
+                              color: ZivoPalette.of(context).surface,
                               borderRadius: BorderRadius.circular(16),
                             ),
                             child: Text(
@@ -1215,48 +1306,50 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l = context.watch<LocaleCubit>();
     final stepLabels = [
-      'Choose Category',
-      'Describe Task',
-      'Set Location',
-      'Review & Post',
+      l.t('create.stepCategory'),
+      l.t('create.stepDetails'),
+      l.t('create.stepLocation'),
+      l.t('create.stepReview'),
     ];
 
+    final palette = ZivoPalette.of(context);
     return PopScope(
       canPop: _step == 0,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _goBack();
       },
       child: Scaffold(
-      backgroundColor: AppColors.backgroundDark,
+      backgroundColor: palette.canvas,
         resizeToAvoidBottomInset: true,
       appBar: AppBar(
-        backgroundColor: AppColors.backgroundDark,
+        backgroundColor: palette.canvas,
+        foregroundColor: palette.textPrimary,
         elevation: 0,
         leading: IconButton(
           icon: Icon(
               _step == 0
                   ? Icons.close_rounded
                   : Icons.arrow_back_ios_new_rounded,
-            color: AppColors.textSecondary,
+            color: palette.textPrimary,
             size: 20,
           ),
           onPressed: _goBack,
         ),
-        title: Text(stepLabels[_step], style: AppTextStyles.headingSmall),
+        title: Text(
+          stepLabels[_step],
+          style: AppTextStyles.headingSmall.copyWith(color: palette.textPrimary),
+        ),
         centerTitle: false,
-          actions: _step == 0
-              ? [
-          Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: _buildMiniModeToggle(),
-          ),
-                ]
-              : null,
       ),
         // Same sticky CTA on phone + desktop — not under the shell dock.
         bottomNavigationBar: _step > 0 ? _buildBottomBar() : null,
-      body: BlocListener<TaskBloc, TaskState>(
+      body: DefaultTextStyle(
+        style: AppTextStyles.bodyMedium.copyWith(color: palette.textPrimary),
+        child: IconTheme(
+          data: IconThemeData(color: palette.textPrimary),
+          child: BlocListener<TaskBloc, TaskState>(
         listener: (context, state) {
           if (state is TaskCreated) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -1299,6 +1392,8 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             ),
           ),
         ),
+        ),
+        ),
       ),
     );
   }
@@ -1306,7 +1401,13 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
   // ── Progress bar ──────────────────────────────────────────────────────────
 
   Widget _buildProgressBar() {
-    const labels = ['Service', 'Details', 'Location', 'Review'];
+    final l = context.watch<LocaleCubit>();
+    final labels = [
+      l.t('create.service'),
+      l.t('create.details'),
+      l.t('create.location'),
+      l.t('create.review'),
+    ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 6, 20, 16),
       child: Row(children: List.generate(labels.length, (i) => Expanded(
@@ -1316,15 +1417,20 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             AnimatedContainer(
               duration: const Duration(milliseconds: 180), height: 4,
               decoration: BoxDecoration(
-                color: i <= _step ? AppColors.helperAccent : AppColors.borderColor,
+                color: i <= _step ? AppColors.helperAccent : ZivoPalette.of(context).border,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
             const SizedBox(height: 8),
-            Text(labels[i], style: AppTextStyles.bodySmall.copyWith(
-              color: i == _step ? AppColors.textPrimary : AppColors.textSecondary,
-              fontWeight: i == _step ? FontWeight.w700 : FontWeight.w400,
-            )),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(labels[i], style: AppTextStyles.bodySmall.copyWith(
+                color: i == _step ? AppColors.textPrimary : ZivoPalette.of(context).textSecondary,
+                fontWeight: i == _step ? FontWeight.w700 : FontWeight.w400,
+                fontSize: 11,
+                height: 1.1,
+              )),
+            ),
           ]),
         ),
       ))),
@@ -1333,71 +1439,114 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
 
   // ── Step 0: Category picker ───────────────────────────────────────────────
 
+  /// Compact starters — primary path is skip-to-type; AI stays secondary.
   Widget _buildShowItCard() {
+    final l = context.watch<LocaleCubit>();
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 18),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.borderColor),
+        border: Border.all(color: ZivoPalette.of(context).border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: AppColors.brandGreenSoft,
-                  borderRadius: BorderRadius.circular(12),
+          // Primary: skip straight to Details and type.
+          Material(
+            color: AppColors.helperAccent,
+            borderRadius: BorderRadius.circular(14),
+            child: InkWell(
+              onTap: _skipToManualTyping,
+              borderRadius: BorderRadius.circular(14),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 14,
                 ),
-                child: const Icon(
-                  Icons.photo_camera_outlined,
-                  color: AppColors.helperAccent,
-                ),
-              ),
-              const Gap(12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Row(
                   children: [
-                    Text(
-                      'Show it. Get help.',
-                      style: AppTextStyles.headingSmall.copyWith(fontSize: 16),
-                    ),
-                    Text(
-                      'Photo a messy room, broken fitting or shopping list — AI drafts the task.',
-                      style: AppTextStyles.bodySmall.copyWith(
-                        color: AppColors.textSecondary,
-                        fontSize: 12,
-                        height: 1.35,
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(10),
                       ),
+                      child: Icon(
+                        Icons.keyboard_alt_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                    const Gap(12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Skip to manual typing',
+                            style: AppTextStyles.bodyMedium.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 15,
+                            ),
+                          ),
+                          Text(
+                            'Write your own title & details on the next step',
+                            style: AppTextStyles.bodySmall.copyWith(
+                              color: Colors.white.withValues(alpha: 0.85),
+                              fontSize: 11,
+                              height: 1.25,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Icon(
+                      Icons.arrow_forward_rounded,
+                      color: Colors.white,
+                      size: 20,
                     ),
                   ],
                 ),
               ),
-            ],
+            ),
           ),
-          const Gap(14),
+          const Gap(12),
+          Text(
+            'Or draft with AI',
+            style: AppTextStyles.capsLabel.copyWith(
+              fontSize: 10,
+              color: ZivoPalette.of(context).textMuted,
+              letterSpacing: 0.6,
+            ),
+          ),
+          const Gap(8),
           if (_photoSuggesting)
             const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
+              padding: EdgeInsets.symmetric(vertical: 6),
               child: Row(
                 children: [
                   SizedBox(
-                    width: 18,
-                    height: 18,
+                    width: 16,
+                    height: 16,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: AppColors.accent,
+                      color: AppColors.helperAccent,
                     ),
                   ),
-                  Gap(10),
-                  Text('Reading your photo…'),
+                  Gap(8),
+                  Text('Reading your photo…', style: TextStyle(fontSize: 12)),
                 ],
               ),
             )
@@ -1405,158 +1554,124 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             Row(
               children: [
                 Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _showItGetHelp(fromCamera: true),
-                    icon: const Icon(Icons.photo_camera_outlined, size: 18),
-                    label: const Text('Camera'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.black,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
+                  child: _MiniAssistChip(
+                    icon: Icons.photo_camera_outlined,
+                    label: l.t('create.camera'),
+                    onTap: () => _showItGetHelp(fromCamera: true),
                   ),
                 ),
-                const Gap(10),
+                const Gap(8),
                 Expanded(
-                  child: FilledButton.icon(
-                    onPressed: () => _showItGetHelp(fromCamera: false),
-                    icon: const Icon(Icons.photo_library_outlined, size: 18),
-                    label: const Text('Gallery'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Colors.black,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
+                  child: _MiniAssistChip(
+                    icon: Icons.photo_library_outlined,
+                    label: l.t('create.gallery'),
+                    onTap: () => _showItGetHelp(fromCamera: false),
+                  ),
+                ),
+                const Gap(8),
+                Expanded(
+                  child: _MiniAssistChip(
+                    icon: _voiceListening
+                        ? Icons.stop_circle_outlined
+                        : Icons.mic_none_rounded,
+                    label: _voiceListening
+                        ? l.t('create.stopRec')
+                        : l.t('create.speak'),
+                    tone: _voiceListening
+                        ? AppColors.errorColor
+                        : AppColors.helperAccent,
+                    onTap: _voiceBusy ? null : _speakYourTask,
                   ),
                 ),
               ],
             ),
           if (_photoSuggestion != null && !_photoSuggesting) ...[
-            const Gap(8),
-            TextButton(
-              onPressed: _openPhotoSuggestSheet,
-              child: const Text('Review last photo draft'),
+            const Gap(6),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: _openPhotoSuggestSheet,
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                ),
+                child: const Text('Review last photo draft'),
+              ),
             ),
           ],
-          const Gap(16),
-          const Divider(height: 1),
-          const Gap(14),
-          Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: AppColors.brandGreenSoft,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(
-                  Icons.mic_none_rounded,
-                  color: AppColors.helperAccent,
-                ),
+          if (_voiceListening && !_voiceBusy) ...[
+            const Gap(6),
+            Text(
+              l.t('create.agentListening'),
+              style: AppTextStyles.bodySmall.copyWith(
+                fontWeight: FontWeight.w700,
+                color: AppColors.errorColor,
+                fontSize: 11,
               ),
-              const Gap(12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            ),
+          ],
+          const Gap(8),
+          Material(
+            color: ZivoPalette.of(context).surface,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: _voiceListening || _voiceBusy
+                  ? null
+                  : () => showTaskBundlePlanner(
+                        context,
+                        initialProblem: _descCtrl.text.trim().isNotEmpty
+                            ? _descCtrl.text.trim()
+                            : _titleCtrl.text.trim(),
+                        categoryHint: _selectedCategory?.name,
+                      ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                child: Row(
                   children: [
-                    Text(
-                      'Speak your task',
-                      style: AppTextStyles.headingSmall.copyWith(fontSize: 16),
+                    Icon(
+                      Icons.auto_awesome_mosaic_rounded,
+                      size: 18,
+                      color: AppColors.helperAccent,
                     ),
-                    Text(
-                      'Say what you need in English, Tamil or Sinhala — built for people who find typing hard, including many with disabilities.',
-                      style: AppTextStyles.bodySmall.copyWith(
-                        color: AppColors.textSecondary,
-                        fontSize: 12,
-                        height: 1.35,
+                    const Gap(8),
+                    Expanded(
+                      child: Text(
+                        l.t('create.split'),
+                        style: AppTextStyles.bodySmall.copyWith(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                        ),
                       ),
                     ),
+                    const Icon(Icons.chevron_right_rounded, size: 18),
                   ],
                 ),
               ),
-            ],
-          ),
-          const Gap(12),
-          Wrap(
-            spacing: 8,
-            children: [
-              for (final opt in const [
-                ('en', 'English'),
-                ('ta', 'தமிழ்'),
-                ('si', 'සිංහල'),
-              ])
-                ChoiceChip(
-                  label: Text(opt.$2),
-                  selected: _voiceLang == opt.$1,
-                  onSelected: _voiceListening
-                      ? null
-                      : (_) => setState(() => _voiceLang = opt.$1),
-                ),
-            ],
-          ),
-          const Gap(10),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: _speakYourTask,
-              icon: Icon(
-                _voiceListening ? Icons.stop_circle : Icons.mic_rounded,
-                size: 18,
-              ),
-              label: Text(
-                _voiceListening ? 'Stop recording' : 'Start recording',
-              ),
-              style: FilledButton.styleFrom(
-                backgroundColor: _voiceListening
-                    ? AppColors.errorColor
-                    : AppColors.helperAccent,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ),
-          if (_voiceListening)
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Text(
-                'Recording… speak now, then tap Stop recording',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-          const Gap(10),
-          OutlinedButton.icon(
-            onPressed: () => showTaskBundlePlanner(
-              context,
-              initialProblem: _descCtrl.text.trim().isNotEmpty
-                  ? _descCtrl.text.trim()
-                  : _titleCtrl.text.trim(),
-              categoryHint: _selectedCategory?.name,
-            ),
-            icon: const Icon(Icons.layers_outlined, size: 18),
-            label: const Text('Split into several tasks (bundle checkout)'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.black,
-              padding: const EdgeInsets.symmetric(vertical: 12),
             ),
           ),
         ],
       ),
-    ).animate().fadeIn(duration: 280.ms).slideY(begin: 0.04);
+    ).animate().fadeIn(duration: 240.ms).slideY(begin: 0.03);
   }
 
   void _pickCategory(TaskCategory cat) {
-    setState(() => _selectedCategory = cat);
-    Future.delayed(const Duration(milliseconds: 180), () {
-      if (mounted) setState(() => _step = 1);
+    setState(() {
+      _selectedCategory = cat;
+      _selectedService = CategoryTaskGuide.custom;
+      _step = 1; // Details = type freely (no Service card again)
+    });
+  }
+
+  /// Skip category grid — land on Details ready to type.
+  void _skipToManualTyping() {
+    setState(() {
+      _selectedCategory = TaskCategory.other;
+      _selectedService = CategoryTaskGuide.custom;
+      _step = 1;
     });
   }
 
@@ -1582,13 +1697,16 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                     width: 36,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: AppColors.borderColor,
+                      color: ZivoPalette.of(context).border,
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
                 ),
                 const Gap(14),
-                Text('More services', style: AppTextStyles.headingSmall),
+                Text(
+                  context.read<LocaleCubit>().t('create.moreServices'),
+                  style: AppTextStyles.headingSmall,
+                ),
                 const Gap(12),
                 GridView.builder(
                   shrinkWrap: true,
@@ -1602,8 +1720,9 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                   itemCount: overflow.length,
                   itemBuilder: (_, i) {
                     final cat = overflow[i];
+                    final loc = context.read<LocaleCubit>();
                     return _CategoryPickTile(
-                      label: cat.displayName,
+                      label: loc.category(cat),
                       index: i,
                       icon: CategoryIconBadge(cat, size: 48),
                       onTap: () {
@@ -1626,10 +1745,18 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       builder: (context, constraints) {
         final phone = constraints.maxWidth < 720;
         final primary = CategoryIcon.mobilePrimary;
-        final cats = phone ? primary : TaskCategory.values;
+        // "Other" is covered by Skip to manual typing — hide from the grid.
+        final cats = phone
+            ? primary
+            : TaskCategory.values
+                .where((c) => c != TaskCategory.other)
+                .toList();
         final itemCount = phone ? primary.length + 1 : cats.length;
 
-    return SingleChildScrollView(
+    final headline = context.watch<LocaleCubit>().t('create.headline');
+    return A11yLandmark.main(
+      label: 'Create a task',
+      child: SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1639,21 +1766,25 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'What kind of help\ndo you need?',
-                      style:
-                          AppTextStyles.displayMedium.copyWith(fontSize: 22),
+                A11yHeading(
+                  text: headline,
+                  level: 1,
+                  style: AppTextStyles.displayMedium.copyWith(fontSize: 22),
                 ).animate().fadeIn(duration: 300.ms).slideY(begin: -0.05),
                 const Gap(4),
                 Text(
-                      'Show a photo, or tap a category',
-                  style: AppTextStyles.bodyMedium,
+                      context.watch<LocaleCubit>().t('create.subhead'),
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    color: ZivoPalette.of(context).textSecondary,
+                  ),
                 ).animate().fadeIn(delay: 100.ms),
               ],
             ),
           ),
               _buildShowItCard(),
-          GridView.builder(
+          A11yLandmark.region(
+            label: 'Service categories',
+            child: GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
                 gridDelegate: phone
@@ -1671,9 +1802,10 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             ),
                 itemCount: itemCount,
             itemBuilder: (ctx, i) {
+                  final loc = context.watch<LocaleCubit>();
                   if (phone && i == primary.length) {
                     return _CategoryPickTile(
-                      label: 'More',
+                      label: loc.t('home.more'),
                       index: i,
                       icon: const MoreIconBadge(size: 48),
                       onTap: _showMoreCategoriesSheet,
@@ -1681,15 +1813,18 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                   }
               final cat = cats[i];
                   return _CategoryPickTile(
-                    label: cat.displayName,
+                    label: loc.category(cat),
                     index: i,
                     icon: CategoryIconBadge(cat, size: 48),
+                    selected: _selectedCategory == cat,
                     onTap: () => _pickCategory(cat),
                   );
                 },
+                        ),
                       ),
                     ],
                   ),
+    ),
               );
             },
     );
@@ -1757,13 +1892,13 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                       decoration: BoxDecoration(
                         color: AppColors.cardElevated,
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: AppColors.borderColor),
+                        border: Border.all(color: ZivoPalette.of(context).border),
                       ),
                       child: Text(
                         'Change',
                         style: AppTextStyles.bodySmall.copyWith(
                             fontSize: 10,
-                            color: AppColors.textMuted),
+                            color: ZivoPalette.of(context).textMuted),
                       ),
                     ),
                   ),
@@ -1772,47 +1907,32 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             ).animate().fadeIn(duration: 280.ms),
 
             const Gap(22),
-            _FieldLabel('What do you need?'),
-            const Gap(8),
-            DropdownButtonFormField<String>(
-              key: ValueKey('service-${_selectedCategory!.name}'),
-              value: _selectedService,
-              isExpanded: true,
-              menuMaxHeight: 320,
-              decoration: const InputDecoration(
-                hintText: 'Choose a task or write your own',
-                prefixIcon: Icon(Icons.checklist_rounded),
-              ),
-              items: [
-                ...CategoryTaskGuide.services(_selectedCategory!),
-                CategoryTaskGuide.custom,
-              ].map((option) => DropdownMenuItem(
-                value: option,
-                child: Text(option, maxLines: 2, overflow: TextOverflow.ellipsis),
-              )).toList(),
-              onChanged: (value) {
-                setState(() => _selectedService = value);
-                if (value != null && value != CategoryTaskGuide.custom) {
-                  _titleCtrl.text = value;
-                } else {
-                  _titleCtrl.clear();
-                }
-              },
-            ),
-            const Gap(18),
-            _FieldLabel('Task title — you can edit this'),
+            // Category already chosen on Service — Details is manual typing only.
+            _FieldLabel('Task title'),
             const Gap(8),
             TextFormField(
               controller: _titleCtrl,
-              style: AppTextStyles.bodyLarge,
+              style: AppTextStyles.bodyLarge.copyWith(
+                color: ZivoPalette.of(context).textPrimary,
+              ),
+              textInputAction: TextInputAction.next,
               decoration: InputDecoration(
                 hintText:
                     'e.g. ${CategoryTaskGuide.services(_selectedCategory!).first}',
                 hintStyle: AppTextStyles.bodyLarge
-                    .copyWith(color: AppColors.textMuted),
-                prefixIcon: Icon(Icons.title_rounded,
-                    color: AppColors.textMuted, size: 18),
+                    .copyWith(color: ZivoPalette.of(context).textMuted),
+                prefixIcon: Icon(Icons.edit_rounded,
+                    color: ZivoPalette.of(context).textMuted, size: 18),
+                helperText: 'Type freely — no need to pick the category again',
+                helperStyle: AppTextStyles.bodySmall.copyWith(
+                  color: ZivoPalette.of(context).textMuted,
+                ),
               ),
+              onChanged: (_) {
+                if (_selectedService != CategoryTaskGuide.custom) {
+                  setState(() => _selectedService = CategoryTaskGuide.custom);
+                }
+              },
               validator: (v) =>
                   (v?.trim().isEmpty ?? true) ? 'Please add a title' : null,
             ),
@@ -1823,17 +1943,22 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             TextFormField(
               controller: _descCtrl,
               maxLines: 5,
-              style: AppTextStyles.bodyLarge,
+              style: AppTextStyles.bodyLarge.copyWith(
+                color: ZivoPalette.of(context).textPrimary,
+              ),
               decoration: InputDecoration(
                 hintText:
                     CategoryTaskGuide.detailsHint(_selectedCategory!),
                 alignLabelWithHint: true,
                 helperText:
                     'Next we’ll ask only the details needed to price this task',
-                prefixIcon: const Padding(
-                  padding: EdgeInsets.only(bottom: 60),
+                helperStyle: AppTextStyles.bodySmall.copyWith(
+                  color: ZivoPalette.of(context).textMuted,
+                ),
+                prefixIcon: Padding(
+                  padding: const EdgeInsets.only(bottom: 60),
                   child: Icon(Icons.notes_rounded,
-                      color: AppColors.textMuted, size: 18),
+                      color: ZivoPalette.of(context).textMuted, size: 18),
                 ),
               ),
               validator: (v) {
@@ -1850,94 +1975,117 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
             Text(
               'Add up to $_maxPhotos photos so helpers see the place, items, or context.',
               style: AppTextStyles.bodySmall
-                  .copyWith(color: AppColors.textMuted, fontSize: 11),
+                  .copyWith(color: ZivoPalette.of(context).textMuted, fontSize: 11),
             ),
             const Gap(10),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                ...List.generate(_photoBytes.length, (i) {
-                  return Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.memory(
-                          _photoBytes[i],
-                          width: 88,
-                          height: 88,
-                          fit: BoxFit.cover,
+            Builder(builder: (context) {
+              final palette = ZivoPalette.of(context);
+              final cta = _ctaColor(context);
+              return Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  ...List.generate(_photoBytes.length, (i) {
+                    return Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Image.memory(
+                            _photoBytes[i],
+                            width: 88,
+                            height: 88,
+                            fit: BoxFit.cover,
+                          ),
                         ),
-                      ),
-                      Positioned(
-                        top: -6,
-                        right: -6,
-                        child: InkWell(
-                          onTap: () => _removePhoto(i),
-                          child: Container(
-                            padding: const EdgeInsets.all(2),
-                            decoration: const BoxDecoration(
-                              color: AppColors.errorColor,
-                              shape: BoxShape.circle,
+                        Positioned(
+                          top: -6,
+                          right: -6,
+                          child: InkWell(
+                            onTap: () => _removePhoto(i),
+                            child: Container(
+                              padding: const EdgeInsets.all(2),
+                              decoration: const BoxDecoration(
+                                color: AppColors.errorColor,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.close,
+                                  size: 14, color: Colors.white),
                             ),
-                            child: const Icon(Icons.close, size: 14, color: Colors.white),
+                          ),
+                        ),
+                      ],
+                    );
+                  }),
+                  if (_photoBytes.length < _maxPhotos)
+                    Material(
+                      color: palette.card,
+                      borderRadius: BorderRadius.circular(12),
+                      child: InkWell(
+                        onTap: _addPhotos,
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          width: 96,
+                          height: 96,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: cta, width: 1.5),
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.add_photo_alternate_outlined,
+                                  color: cta, size: 26),
+                              const Gap(6),
+                              Text(
+                                'Gallery',
+                                style: AppTextStyles.bodySmall.copyWith(
+                                  color: palette.textPrimary,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
-                    ],
-                  );
-                }),
-                if (_photoBytes.length < _maxPhotos)
-                  OutlinedButton(
-                    onPressed: _addPhotos,
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size(88, 88),
-                      shape: RoundedRectangleBorder(
+                    ),
+                  if (_photoBytes.length < _maxPhotos)
+                    Material(
+                      color: palette.card,
+                      borderRadius: BorderRadius.circular(12),
+                      child: InkWell(
+                        onTap: _addPhotoFromCamera,
                         borderRadius: BorderRadius.circular(12),
-                      ),
-                      side: BorderSide(color: color.withValues(alpha: 0.45)),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.add_photo_alternate_outlined,
-                            color: color, size: 22),
-                        const Gap(4),
-                        Text(
-                          'Gallery',
-                          style: AppTextStyles.bodySmall
-                              .copyWith(color: color, fontSize: 10),
+                        child: Container(
+                          width: 96,
+                          height: 96,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: cta, width: 1.5),
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.photo_camera_outlined,
+                                  color: cta, size: 26),
+                              const Gap(6),
+                              Text(
+                                'Camera',
+                                style: AppTextStyles.bodySmall.copyWith(
+                                  color: palette.textPrimary,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ],
-                    ),
-                  ),
-                if (_photoBytes.length < _maxPhotos)
-                  OutlinedButton(
-                    onPressed: _addPhotoFromCamera,
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size(88, 88),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
                       ),
-                      side: BorderSide(color: color.withValues(alpha: 0.45)),
                     ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.photo_camera_outlined,
-                            color: color, size: 22),
-                        const Gap(4),
-                        Text(
-                          'Camera',
-                          style: AppTextStyles.bodySmall
-                              .copyWith(color: color, fontSize: 10),
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
+                ],
+              );
+            }),
 
             if (_livePolicyWarning != null) ...[
               const Gap(14),
@@ -2003,21 +2151,32 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Where do you need help?',
-              style: AppTextStyles.displayMedium.copyWith(fontSize: 20))
-              .animate().fadeIn(duration: 280.ms),
+          Text(
+            'Where do you need help?',
+            style: AppTextStyles.displayMedium.copyWith(
+              fontSize: 20,
+              color: ZivoPalette.of(context).textPrimary,
+            ),
+          ).animate().fadeIn(duration: 280.ms),
           const Gap(4),
-          Text('Pick your city, then add the exact address.',
-              style: AppTextStyles.bodyMedium),
+          Text(
+            'Pick your city, then add the exact address.',
+            style: AppTextStyles.bodyMedium.copyWith(
+              color: ZivoPalette.of(context).textSecondary,
+            ),
+          ),
           const Gap(18),
 
-          // Category grid
-          GridView.builder(
+          // City grid — palette.card so labels stay readable in dark mode
+          Builder(builder: (context) {
+            final palette = ZivoPalette.of(context);
+            final cta = _ctaColor(context);
+            return GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
               maxCrossAxisExtent: 140,
-              mainAxisExtent: 148,
+                mainAxisExtent: 48,
               crossAxisSpacing: 10,
               mainAxisSpacing: 10,
             ),
@@ -2036,14 +2195,14 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 8),
+                        horizontal: 10, vertical: 8),
                   decoration: BoxDecoration(
                     color: isSelected
-                        ? _catColor.withValues(alpha: 0.14)
-                        : AppColors.cardDark,
+                          ? cta.withValues(alpha: 0.18)
+                          : palette.card,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: isSelected ? _catColor : AppColors.borderColor,
+                        color: isSelected ? cta : palette.border,
                       width: isSelected ? 1.5 : 1,
                     ),
                   ),
@@ -2053,22 +2212,22 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                         isSelected
                             ? Icons.check_circle_rounded
                             : Icons.location_on_outlined,
-                        color: isSelected ? _catColor : AppColors.textMuted,
+                          color: isSelected ? cta : palette.textMuted,
                         size: 15,
                       ),
-                      const Gap(8),
+                        const Gap(6),
                       Expanded(
                         child: Text(
                           name,
                           style: AppTextStyles.bodyMedium.copyWith(
-                            color: isSelected
-                                ? _catColor
-                                : AppColors.textSecondary,
+                              color: palette.textPrimary,
                             fontWeight: isSelected
-                                ? FontWeight.w600
-                                : FontWeight.w400,
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
                             fontSize: 12,
                           ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ],
@@ -2076,40 +2235,70 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                 ),
               );
             },
-          ),
+            );
+          }),
 
           const Gap(18),
           _FieldLabel('Exact Address / Landmark'),
           const Gap(8),
           TextFormField(
             controller: _locationLabelCtrl,
-            style: AppTextStyles.bodyLarge,
-            decoration: const InputDecoration(
+            style: AppTextStyles.bodyLarge.copyWith(
+              color: ZivoPalette.of(context).textPrimary,
+            ),
+            decoration: InputDecoration(
               hintText: 'e.g. Near Commercial Bank, Galle Road',
               prefixIcon: Icon(Icons.home_outlined,
-                  color: AppColors.textMuted, size: 18),
+                  color: ZivoPalette.of(context).textMuted, size: 18),
             ),
           ),
 
           if (_pickedLocation != null) ...[
-            const Gap(12),
+            const Gap(16),
+            ZivoLiveMapPeek(
+              center: _pickedLocation!,
+              label: _locationLabelCtrl.text.trim().isEmpty
+                  ? null
+                  : _locationLabelCtrl.text.trim(),
+              onPicked: (pin) {
+                setState(() {
+                  _pickedLocation = pin;
+                  if (_locationLabelCtrl.text.trim().isEmpty) {
+                    _locationLabelCtrl.text =
+                        '${pin.latitude.toStringAsFixed(4)}, ${pin.longitude.toStringAsFixed(4)}';
+                  }
+                });
+              },
+            ),
+            const Gap(10),
             Container(
               padding:
                   const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
-                color: const Color(0xFF1B5E20).withValues(alpha: 0.15),
+                color: ZivoPalette.of(context)
+                    .accent
+                    .withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
-                    color: const Color(0xFF388E3C).withValues(alpha: 0.4)),
+                  color: ZivoPalette.of(context)
+                      .accent
+                      .withValues(alpha: 0.4),
+                ),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.check_circle_outline_rounded,
-                      color: Color(0xFF66BB6A), size: 15),
+                  Icon(Icons.check_circle_outline_rounded,
+                      color: ZivoPalette.of(context).accent, size: 15),
                   const Gap(8),
-                  Text('Location pinned ✔',
+                  Expanded(
+                    child: Text(
+                      'Pinned — tap the map to expand & fine-tune',
                       style: AppTextStyles.bodySmall.copyWith(
-                          color: const Color(0xFF66BB6A))),
+                        color: ZivoPalette.of(context).accent,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -2261,7 +2450,6 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
         (_estimatedHours * _hourlyRate);
     final helperEarns = total * 0.9;
     final escrowAll = total + (_needsPurchaseTrust ? _goodsBudget : 0);
-    final color = _catColor;
 
     // Sticky Post lives in _buildBottomBar; keep light scroll padding only.
     return SingleChildScrollView(
@@ -2273,14 +2461,19 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
         children: [
           Text(
             _fieldsHeadline,
-            style: AppTextStyles.displayMedium.copyWith(fontSize: 20),
+            style: AppTextStyles.displayMedium.copyWith(
+              fontSize: 20,
+              color: ZivoPalette.of(context).textPrimary,
+            ),
           ).animate().fadeIn(duration: 280.ms),
           const Gap(4),
               Text(
             _fieldsNote.isEmpty
                 ? 'Answer what’s relevant for this job. You can accept the fair price or add a tip — not lower it.'
                 : _fieldsNote,
-            style: AppTextStyles.bodyMedium,
+            style: AppTextStyles.bodyMedium.copyWith(
+              color: ZivoPalette.of(context).textSecondary,
+            ),
           ),
           const Gap(20),
 
@@ -2323,7 +2516,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                       height: 14,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(Icons.refresh_rounded, size: 18),
+                  : Icon(Icons.refresh_rounded, size: 18),
               label: Text(_quoting ? 'Updating price…' : 'Update fair price'),
             ),
           ),
@@ -2369,7 +2562,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                           '${_clientBoostLkr > 0 ? ' + tip $_clientBoostLkr' : ''}'
                           ' · helpers are protected from undercuts',
                           style: AppTextStyles.bodySmall.copyWith(
-                            color: AppColors.textMuted,
+                            color: ZivoPalette.of(context).textMuted,
                             fontSize: 11,
                           ),
                         ),
@@ -2381,25 +2574,30 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
 
           if (_needsPurchaseTrust) ...[
             const Gap(18),
-            Container(
+            Builder(builder: (context) {
+              final palette = ZivoPalette.of(context);
+              final isDark = Theme.of(context).brightness == Brightness.dark;
+              return Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
-                color: AppColors.errorColor.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(10),
+                  color: AppColors.errorColor.withValues(alpha: isDark ? 0.18 : 0.08),
+                  borderRadius: BorderRadius.circular(10),
                 border: Border.all(
-                  color: AppColors.errorColor.withValues(alpha: 0.28),
+                    color: AppColors.errorColor.withValues(alpha: 0.55),
                 ),
               ),
               child: Text(
-                'Zero cash: escrow the goods budget — don’t pay the helper in cash.',
+                  'Zero cash: escrow the goods budget — don’t pay the helper in cash.',
                 style: AppTextStyles.bodySmall.copyWith(
-                  color: AppColors.textPrimary,
-                  fontWeight: FontWeight.w600,
-                  height: 1.35,
+                    color: palette.textPrimary,
+                    fontWeight: FontWeight.w600,
+                    height: 1.35,
                 ),
               ),
-            ),
+              );
+            }),
             const Gap(14),
             _FieldLabel('Goods budget (${AppConfig.currencyCode})'),
             const Gap(6),
@@ -2420,7 +2618,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
               max: 25000,
               divisions: 50,
               activeColor: AppColors.helperAccent,
-              inactiveColor: AppColors.borderColor,
+              inactiveColor: ZivoPalette.of(context).border,
               onChanged: (v) => setState(() => _goodsBudget = v),
             ),
             const Gap(12),
@@ -2475,13 +2673,16 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
 
           const Gap(22),
 
-          // Summary card
-          Container(
+          // Summary card — theme card surface (not white) for dark mode
+          Builder(builder: (context) {
+            final palette = ZivoPalette.of(context);
+            final cta = _ctaColor(context);
+            return Container(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
-              color: AppColors.cardElevated,
+              color: palette.card,
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: color.withValues(alpha: 0.22)),
+              border: Border.all(color: palette.border),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -2492,7 +2693,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                       width: 38,
                       height: 38,
                       decoration: BoxDecoration(
-                        color: color.withValues(alpha: 0.14),
+                        color: cta.withValues(alpha: 0.18),
                         shape: BoxShape.circle,
                       ),
                       child: Center(
@@ -2500,9 +2701,11 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                       ),
                     ),
                     const Gap(10),
-                    Text(_selectedCategory!.displayName,
+                    Text(
+                      _selectedCategory!.displayName,
                         style: AppTextStyles.headingSmall
-                            .copyWith(color: color)),
+                          .copyWith(color: palette.textPrimary),
+                    ),
                   ],
                 ),
                 const Divider(height: 22),
@@ -2541,7 +2744,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                 const Divider(height: 18),
                 Wrap(spacing: 8, children: [
                   TextButton.icon(onPressed: () => setState(() => _step = 1),
-                    icon: const Icon(Icons.edit_outlined, size: 16), label: const Text('Edit details')),
+                    icon: Icon(Icons.edit_outlined, size: 16), label: const Text('Edit details')),
                   TextButton.icon(onPressed: () => setState(() => _step = 2),
                     icon: const Icon(Icons.place_outlined, size: 16), label: const Text('Edit location')),
                 ]),
@@ -2566,12 +2769,13 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                       ? 'Receipt unlocks goods escrow. Zero cash to helper.'
                       : '10% platform fee covers trust & secure escrow payment.',
                   style: AppTextStyles.bodySmall
-                      .copyWith(color: AppColors.textMuted),
+                      .copyWith(color: palette.textMuted),
                   textAlign: TextAlign.center,
                 ),
               ],
             ),
-          ),
+          );
+          }),
         ],
         ),
       ),
@@ -2590,13 +2794,13 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
   // ── Sticky Continue / Post (clears phone glass dock) ───────────────────────
 
   Widget _buildBottomBar() {
-    final color = _catColor;
+    final color = _ctaColor(context);
     final total = (_priceQuote?['labor_lkr'] as num?)?.toDouble() ??
         (_estimatedHours * _hourlyRate);
     final keyboard = MediaQuery.viewInsetsOf(context).bottom;
 
     return Material(
-      color: AppColors.backgroundDark,
+      color: ZivoPalette.of(context).canvas,
       elevation: 10,
       shadowColor: Colors.black26,
       child: SafeArea(
@@ -2624,8 +2828,8 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                       },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: color,
-                          foregroundColor: Colors.white,
-                  disabledBackgroundColor: AppColors.borderColor,
+                          foregroundColor: ZivoPalette.of(context).onAccent,
+                  disabledBackgroundColor: ZivoPalette.of(context).border,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                           shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
@@ -2690,16 +2894,66 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
 
 // ── Reusable widgets ──────────────────────────────────────────────────────────
 
+class _MiniAssistChip extends StatelessWidget {
+  const _MiniAssistChip({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.tone,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+  final Color? tone;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = tone ?? AppColors.textPrimary;
+    return Material(
+      color: c.withValues(alpha: 0.07),
+      borderRadius: BorderRadius.circular(11),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(11),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+          child: Column(
+            children: [
+              Icon(icon, size: 18, color: c),
+              const Gap(4),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: c,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _FieldLabel extends StatelessWidget {
   const _FieldLabel(this.label);
   final String label;
   @override
   Widget build(BuildContext context) {
+    final palette = ZivoPalette.of(context);
     return Text(
       label,
       style: AppTextStyles.labelLarge.copyWith(
         fontSize: 12,
         letterSpacing: 0.5,
+        color: palette.textPrimary,
+        fontWeight: FontWeight.w600,
       ),
     );
   }
@@ -2714,20 +2968,29 @@ class _ReviewRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = ZivoPalette.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label,
-              style: bold
+          Text(
+            label,
+            style: (bold
                   ? AppTextStyles.headingSmall
-                  : AppTextStyles.bodyMedium),
-          Text(value,
+                    : AppTextStyles.bodyMedium)
+                .copyWith(color: palette.textSecondary),
+          ),
+          Text(
+            value,
               style: bold
-                  ? AppTextStyles.headingSmall
-                      .copyWith(color: color ?? AppColors.accent)
-                  : AppTextStyles.bodyMedium.copyWith(color: color)),
+                ? AppTextStyles.headingSmall.copyWith(
+                    color: color ?? palette.accent,
+                  )
+                : AppTextStyles.bodyMedium.copyWith(
+                    color: color ?? palette.textPrimary,
+                  ),
+          ),
         ],
       ),
     );
@@ -2740,38 +3003,69 @@ class _CategoryPickTile extends StatelessWidget {
     required this.index,
     required this.icon,
     required this.onTap,
+    this.selected = false,
   });
 
   final String label;
   final int index;
   final Widget icon;
   final VoidCallback onTap;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          icon,
-          const Gap(6),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 2),
-            child: Text(
-              label,
-              style: AppTextStyles.bodySmall.copyWith(
-                color: AppColors.textPrimary,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                height: 1.2,
-              ),
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+    final palette = ZivoPalette.of(context);
+    // Same charcoal card block as home “What do you need help with?” tiles.
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: selected ? '$label, selected' : label,
+      excludeSemantics: true,
+      child: Material(
+        color: palette.card,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: BorderSide(
+            color: selected ? palette.accent : palette.border,
+            width: selected ? 1.5 : 1,
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            decoration: BoxDecoration(
+              color: selected
+                  ? palette.accent.withValues(alpha: 0.12)
+                  : Colors.transparent,
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                icon,
+                const Gap(6),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: Text(
+                    label,
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: palette.textPrimary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      height: 1.15,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     )
         .animate(delay: Duration(milliseconds: 20 * index))

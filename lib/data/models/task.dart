@@ -37,6 +37,10 @@ enum TaskCategory {
   eventHelp,       // Set up party, decoration, serve
   photography,     // Click photos/videos at events
   homeRepair,      // Fix leaks, electric, minor repairs
+  phoneCheckIn,    // Call an elder / relative to check in (seated / remote)
+  readingAloud,    // Read a letter, form or message aloud over the phone
+  remoteTutoring,  // Teach a subject by phone / video (no travel)
+  sightedAssist,   // 60-second sighted video check for a blind helper
   other;           // Any other task not listed
 
   String get displayName {
@@ -61,6 +65,10 @@ enum TaskCategory {
       case TaskCategory.eventHelp:         return 'Event Help';
       case TaskCategory.photography:       return 'Photography';
       case TaskCategory.homeRepair:        return 'Home Repair';
+      case TaskCategory.phoneCheckIn:      return 'Phone check-in';
+      case TaskCategory.readingAloud:      return 'Reading aloud';
+      case TaskCategory.remoteTutoring:    return 'Remote tutoring';
+      case TaskCategory.sightedAssist:     return 'Sighted assist';
       case TaskCategory.other:             return 'Other';
     }
   }
@@ -87,6 +95,10 @@ enum TaskCategory {
       case TaskCategory.eventHelp:         return '🎉';
       case TaskCategory.photography:       return '📷';
       case TaskCategory.homeRepair:        return '🔧';
+      case TaskCategory.phoneCheckIn:      return '📞';
+      case TaskCategory.readingAloud:      return '🔊';
+      case TaskCategory.remoteTutoring:    return '💻';
+      case TaskCategory.sightedAssist:     return '👁️';
       case TaskCategory.other:             return '📌';
     }
   }
@@ -113,6 +125,10 @@ enum TaskCategory {
       case TaskCategory.eventHelp:         return 'Set up, decorate and assist at your event or party';
       case TaskCategory.photography:       return 'Click photos or record videos at your event';
       case TaskCategory.homeRepair:        return 'Fix leaks, minor electrical, painting and repairs';
+      case TaskCategory.phoneCheckIn:      return 'Call to check that someone is well — no travel needed';
+      case TaskCategory.readingAloud:      return 'Read a letter, form or message aloud over the phone';
+      case TaskCategory.remoteTutoring:    return 'Teach a subject by phone or video — seated work';
+      case TaskCategory.sightedAssist:     return '60-second video check to help a blind neighbour';
       case TaskCategory.other:             return 'Any other help you might need';
     }
   }
@@ -171,6 +187,7 @@ class Task extends Equatable {
     this.matchReasons = const [],
     this.matchMode,
     this.helperProfile,
+    this.accessAudit,
     this.bundleId,
     this.bundleTitle,
     this.bookedForUserId,
@@ -231,6 +248,9 @@ class Task extends Equatable {
   final String? matchMode;
   /// Nested helper snapshot from API (`helper.full_name`, rating, …).
   final Map<String, dynamic>? helperProfile;
+
+  /// Entrance access audit (stairs/ramp/door) — informational for helpers.
+  final Map<String, dynamic>? accessAudit;
 
   /// One problem → several tasks.
   final String? bundleId;
@@ -364,6 +384,9 @@ class Task extends Equatable {
       helperProfile:        json['helper'] is Map
           ? Map<String, dynamic>.from(json['helper'] as Map)
           : null,
+      accessAudit:          json['access_audit'] is Map
+          ? Map<String, dynamic>.from(json['access_audit'] as Map)
+          : null,
       bundleId:             json['bundle_id'] as String?,
       bundleTitle:          json['bundle_title'] as String?,
       bookedForUserId:      json['booked_for_user_id'] as String?,
@@ -422,6 +445,7 @@ class Task extends Equatable {
     'match_reasons': matchReasons,
     'match_mode': matchMode,
     if (helperProfile != null) 'helper': helperProfile,
+    if (accessAudit != null) 'access_audit': accessAudit,
     'bundle_id': bundleId,
     'bundle_title': bundleTitle,
     'booked_for_user_id': bookedForUserId,
@@ -456,6 +480,7 @@ class Task extends Equatable {
     List<String>? matchReasons,
     String? matchMode,
     Map<String, dynamic>? helperProfile,
+    Map<String, dynamic>? accessAudit,
   }) {
     return Task(
       id: id,
@@ -504,6 +529,7 @@ class Task extends Equatable {
       matchReasons: matchReasons ?? this.matchReasons,
       matchMode: matchMode ?? this.matchMode,
       helperProfile: helperProfile ?? this.helperProfile,
+      accessAudit: accessAudit ?? this.accessAudit,
       bundleId: bundleId,
       bundleTitle: bundleTitle,
       bookedForUserId: bookedForUserId,

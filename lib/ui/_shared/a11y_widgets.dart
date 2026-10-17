@@ -4,6 +4,7 @@ import 'package:gap/gap.dart';
 import 'package:hyperlocal/blocs/a11y/a11y_cubit.dart';
 import 'package:hyperlocal/core/constants/app_colors.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
+import 'package:hyperlocal/core/l10n/locale_cubit.dart';
 import 'package:hyperlocal/core/utils/humanize_error.dart';
 import 'package:hyperlocal/core/utils/speak_text.dart';
 import 'package:hyperlocal/core/utils/voice_recorder.dart';
@@ -12,17 +13,20 @@ import 'package:hyperlocal/ui/_shared/a11y_voice_assist.dart';
 import 'package:image_picker/image_picker.dart';
 
 /// Compact Read aloud control — icon toggles Read ↔ Stop with global sync.
+/// Uses the app [LocaleCubit] language when [lang] is omitted.
 class A11yReadButton extends StatefulWidget {
   const A11yReadButton({
     super.key,
     required this.text,
-    this.lang = 'en',
+    this.lang,
     this.compact = true,
+    this.iconOnly = false,
   });
 
   final String text;
-  final String lang;
+  final String? lang;
   final bool compact;
+  final bool iconOnly;
 
   @override
   State<A11yReadButton> createState() => _A11yReadButtonState();
@@ -45,6 +49,15 @@ class _A11yReadButtonState extends State<A11yReadButton> {
     if (mounted) setState(() {});
   }
 
+  String get _lang {
+    if (widget.lang != null && widget.lang!.isNotEmpty) return widget.lang!;
+    try {
+      return context.read<LocaleCubit>().code;
+    } catch (_) {
+      return 'en';
+    }
+  }
+
   Future<void> _toggle() async {
     if (widget.text.trim().isEmpty) return;
     if (speakingListenable.value || isSpeaking) {
@@ -52,15 +65,16 @@ class _A11yReadButtonState extends State<A11yReadButton> {
       return;
     }
     ScaffoldMessenger.maybeOf(context)?.hideCurrentSnackBar();
-    await speakText(widget.text, lang: widget.lang);
+    // Resume AudioContext on user gesture (Chrome autoplay policy).
+    await speakText(widget.text, lang: _lang);
     if (!mounted) return;
-    await Future<void>.delayed(const Duration(milliseconds: 400));
+    await Future<void>.delayed(const Duration(milliseconds: 500));
     if (!mounted) return;
     if (!speakingListenable.value && !isSpeaking) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'No voice available in this browser. Allow sound for this site, or try Chrome with system voices enabled.',
+            'No voice available in this browser. Allow sound for this site, or try Chrome.',
           ),
           duration: Duration(seconds: 4),
         ),
@@ -70,24 +84,54 @@ class _A11yReadButtonState extends State<A11yReadButton> {
 
   @override
   Widget build(BuildContext context) {
+    // Read aloud only when Accessibility Mode is on.
+    var a11yOn = false;
+    try {
+      a11yOn = context.watch<A11yCubit>().state;
+    } catch (_) {
+      a11yOn = false;
+    }
+    if (!a11yOn) return const SizedBox.shrink();
+
     final speaking = speakingListenable.value;
-    final size = widget.compact ? 16.0 : 18.0;
+    final size = widget.compact ? 18.0 : 20.0;
+    String readLabel = 'Read';
+    String stopLabel = 'Stop';
+    try {
+      final l = context.watch<LocaleCubit>();
+      readLabel = l.t('task.read');
+      stopLabel = l.t('task.stop');
+    } catch (_) {}
+
+    if (widget.iconOnly) {
+      return IconButton(
+        tooltip: speaking ? stopLabel : readLabel,
+        onPressed: widget.text.trim().isEmpty ? null : _toggle,
+        icon: Icon(
+          speaking ? Icons.stop_circle_rounded : Icons.volume_up_rounded,
+          size: size,
+          color: speaking ? AppColors.errorColor : AppColors.helperAccent,
+        ),
+        visualDensity: VisualDensity.compact,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+      );
+    }
+
     return TextButton.icon(
       onPressed: widget.text.trim().isEmpty ? null : _toggle,
       icon: Icon(
-        speaking ? Icons.stop_circle : Icons.volume_up_rounded,
+        speaking ? Icons.stop_circle_rounded : Icons.volume_up_rounded,
         size: size,
       ),
-      label: Text(
-        speaking
-            ? (widget.compact ? 'Stop' : 'Stop reading')
-            : (widget.compact ? 'Read' : 'Read aloud'),
-      ),
+      label: Text(speaking ? stopLabel : readLabel),
       style: TextButton.styleFrom(
         foregroundColor:
             speaking ? AppColors.errorColor : AppColors.helperAccent,
-        padding: EdgeInsets.zero,
+        padding: const EdgeInsets.symmetric(horizontal: 6),
         visualDensity: VisualDensity.compact,
+        // Avoid Flutter-web underline artifacts under Tamil glyphs.
+        textStyle: const TextStyle(decoration: TextDecoration.none),
       ),
     );
   }

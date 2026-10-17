@@ -57,6 +57,28 @@ abstract class AppRoutes {
   static const String sharedLive = '/shared/:token';
 
   static String sharedLiveFor(String token) => '/shared/$token';
+
+  /// After phone/email login, land on client home — not Account.
+  /// Keeps deep links (create task, wallet, track, admin) intact.
+  static String afterLogin(String? returnTo) {
+    if (returnTo == null || returnTo.trim().isEmpty) return shell;
+    String dest;
+    try {
+      dest = Uri.decodeComponent(returnTo);
+    } catch (_) {
+      dest = returnTo;
+    }
+    final path = Uri.tryParse(dest)?.path ?? dest;
+    if (path == account ||
+        path == settings ||
+        path == qualifications ||
+        path == reviews ||
+        path == quotes ||
+        path == guidelines) {
+      return shell;
+    }
+    return dest;
+  }
 }
 
 class AppRouter {
@@ -231,18 +253,31 @@ class AppRouter {
             name: 'createTask',
             pageBuilder: (ctx, state) {
               TaskCategory? initial;
+              String? initialTitle;
+              String? initialDescription;
               final extra = state.extra;
               if (extra is TaskCategory) {
                 initial = extra;
               } else if (extra is String) {
                 initial = TaskCategory.fromString(extra);
+              } else if (extra is Map) {
+                final cat = extra['category']?.toString();
+                if (cat != null && cat.isNotEmpty) {
+                  initial = TaskCategory.fromString(cat);
+                }
+                initialTitle = extra['title']?.toString();
+                initialDescription = extra['description']?.toString();
               } else {
                 final q = state.uri.queryParameters['category'];
                 if (q != null) initial = TaskCategory.fromString(q);
               }
               return _noTransition(
                 state,
-                TaskCreationScreen(initialCategory: initial),
+                TaskCreationScreen(
+                  initialCategory: initial,
+                  initialTitle: initialTitle,
+                  initialDescription: initialDescription,
+                ),
               );
             },
           ),
@@ -336,7 +371,12 @@ class AppRouter {
     if (loc == AppRoutes.admin) return true;
     if (loc == AppRoutes.onboarding) return true;
     if (loc.startsWith('/task/') && loc.endsWith('/track')) return true;
-    if (loc.startsWith('/task/') && loc.endsWith('/chat')) return true;
+    if (loc.startsWith('/task/') &&
+        (loc.endsWith('/chat') ||
+            loc.endsWith('/chat/unread') ||
+            loc.endsWith('/chat/read'))) {
+      return true;
+    }
     if (loc.startsWith('/job/') && loc.endsWith('/active')) return true;
     return false;
   }
@@ -407,18 +447,10 @@ class AppRouter {
       return AppRoutes.shell;
     }
 
-    // Signed in: leave login/OTP for intended destination.
+    // Signed in: leave login/OTP for intended destination (never Account).
     if (isAuthenticated || authState is AuthNeedsOnboarding) {
       if (isLoggingIn || isOtp) {
-        final returnTo = uri.queryParameters['returnTo'];
-        if (returnTo != null && returnTo.isNotEmpty) {
-          try {
-            return Uri.decodeComponent(returnTo);
-          } catch (_) {
-            return AppRoutes.shell;
-          }
-        }
-        return AppRoutes.shell;
+        return AppRoutes.afterLogin(uri.queryParameters['returnTo']);
       }
       if (!_hasLanded && loc == AppRoutes.shell) {
         _hasLanded = true;

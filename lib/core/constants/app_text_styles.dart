@@ -3,7 +3,10 @@ import 'package:flutter/material.dart';
 import 'app_colors.dart';
 
 /// Transit-inspired typography using the bundled Inter family.
-/// Display: compact bold. Text: natural spacing and a legible line height.
+///
+/// **Do not bake light-mode colors into these styles.** Color comes from
+/// [ThemeData.textTheme] / [DefaultTextStyle] so light and dark both work.
+/// Override with `ZivoPalette.of(context)` when you need muted / accent roles.
 abstract class AppTextStyles {
   AppTextStyles._();
 
@@ -12,7 +15,6 @@ abstract class AppTextStyles {
     fontFamily: 'Inter',
     fontSize: 40,
     fontWeight: FontWeight.w700,
-    color: AppColors.textPrimary,
     letterSpacing: -1.1,
     height: 1.1,
   );
@@ -21,7 +23,6 @@ abstract class AppTextStyles {
     fontFamily: 'Inter',
     fontSize: 32,
     fontWeight: FontWeight.w700,
-    color: AppColors.textPrimary,
     letterSpacing: -0.8,
     height: 1.2,
   );
@@ -31,7 +32,6 @@ abstract class AppTextStyles {
     fontFamily: 'Inter',
     fontSize: 26,
     fontWeight: FontWeight.w700,
-    color: AppColors.textPrimary,
     letterSpacing: -0.5,
     height: 1.3,
   );
@@ -40,7 +40,6 @@ abstract class AppTextStyles {
     fontFamily: 'Inter',
     fontSize: 20,
     fontWeight: FontWeight.w600,
-    color: AppColors.textPrimary,
     letterSpacing: -0.3,
     height: 1.3,
   );
@@ -49,7 +48,6 @@ abstract class AppTextStyles {
     fontFamily: 'Inter',
     fontSize: 16,
     fontWeight: FontWeight.w600,
-    color: AppColors.textPrimary,
     letterSpacing: -0.2,
   );
 
@@ -58,7 +56,6 @@ abstract class AppTextStyles {
     fontFamily: 'Inter',
     fontSize: 16,
     fontWeight: FontWeight.w400,
-    color: AppColors.textPrimary,
     height: 1.45,
   );
 
@@ -66,7 +63,6 @@ abstract class AppTextStyles {
     fontFamily: 'Inter',
     fontSize: 14,
     fontWeight: FontWeight.w400,
-    color: AppColors.textSecondary,
     height: 1.5,
   );
 
@@ -74,7 +70,6 @@ abstract class AppTextStyles {
     fontFamily: 'Inter',
     fontSize: 13,
     fontWeight: FontWeight.w400,
-    color: AppColors.textMuted,
     height: 1.5,
   );
 
@@ -83,7 +78,6 @@ abstract class AppTextStyles {
     fontFamily: 'Inter',
     fontSize: 14,
     fontWeight: FontWeight.w500,
-    color: AppColors.textSecondary,
     letterSpacing: 0.1,
   );
 
@@ -91,7 +85,6 @@ abstract class AppTextStyles {
     fontFamily: 'Inter',
     fontSize: 12,
     fontWeight: FontWeight.w500,
-    color: AppColors.textMuted,
     letterSpacing: 0.4,
   );
 
@@ -99,7 +92,6 @@ abstract class AppTextStyles {
     fontFamily: 'Inter',
     fontSize: 12,
     fontWeight: FontWeight.w600,
-    color: AppColors.textMuted,
     letterSpacing: 0.8,
   );
 
@@ -120,23 +112,66 @@ abstract class AppTextStyles {
     letterSpacing: 8,
   );
 
-  static const TextStyle moneyLarge = TextStyle(
+  /// Wallet page hero balance — same on phone & desktop (was 36–40).
+  static const TextStyle moneyHero = TextStyle(
     fontFeatures: [FontFeature.tabularFigures()],
     fontFamily: 'Inter',
-    fontSize: 36,
+    fontSize: 28,
     fontWeight: FontWeight.w700,
-    color: AppColors.textPrimary,
-    letterSpacing: -0.8,
+    letterSpacing: -0.6,
+    height: 1.1,
   );
 
+  /// Alias kept for older call sites.
+  static const TextStyle moneyLarge = moneyHero;
+
+  /// Compact strip values (Total Earned / Jobs / Rating / escrow pills).
+  static const TextStyle moneyStat = TextStyle(
+    fontFeatures: [FontFeature.tabularFigures()],
+    fontFamily: 'Inter',
+    fontSize: 14,
+    fontWeight: FontWeight.w700,
+    letterSpacing: -0.2,
+    height: 1.15,
+  );
+
+  static const TextStyle moneyStatLabel = TextStyle(
+    fontFamily: 'Inter',
+    fontSize: 11,
+    fontWeight: FontWeight.w500,
+    height: 1.2,
+  );
+
+  /// Medium emphasis (review totals, earnings callouts).
   static const TextStyle moneyMedium = TextStyle(
     fontFeatures: [FontFeature.tabularFigures()],
     fontFamily: 'Inter',
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: FontWeight.w700,
-    color: AppColors.textPrimary,
-    letterSpacing: -0.5,
+    letterSpacing: -0.3,
+    height: 1.15,
   );
+
+  /// Top-bar wallet pill + inline meta.
+  static const TextStyle moneyMeta = TextStyle(
+    fontFeatures: [FontFeature.tabularFigures()],
+    fontFamily: 'Inter',
+    fontSize: 12,
+    fontWeight: FontWeight.w700,
+    letterSpacing: -0.1,
+    height: 1.1,
+  );
+
+  /// Page titles: slightly smaller on narrow screens for balance.
+  static TextStyle pageTitle(BuildContext context) {
+    final wide = MediaQuery.sizeOf(context).width >= 900;
+    return displayMedium.copyWith(
+      fontSize: wide ? 28 : 24,
+      height: 1.15,
+      letterSpacing: -0.8,
+      fontWeight: FontWeight.w800,
+    );
+  }
 
   static const TextStyle distanceBadge = TextStyle(
     fontFamily: 'Inter',
@@ -146,21 +181,21 @@ abstract class AppTextStyles {
     letterSpacing: 0.3,
   );
 
-  // ── Material TextTheme ────────────────────────────────────────────────
+  // ── Material TextTheme (colors applied in AppTheme via .apply) ─────────
   static TextTheme get textTheme => const TextTheme(
-    displayLarge:  displayLarge,
-    displayMedium: displayMedium,
-    titleLarge: headingMedium,
-    titleMedium: headingSmall,
-    titleSmall: labelLarge,
-    labelMedium: labelLarge,
-    headlineLarge: headingLarge,
-    headlineMedium: headingMedium,
-    headlineSmall: headingSmall,
-    bodyLarge:     bodyLarge,
-    bodyMedium:    bodyMedium,
-    bodySmall:     bodySmall,
-    labelLarge:    labelLarge,
-    labelSmall:    labelSmall,
-  );
+        displayLarge: displayLarge,
+        displayMedium: displayMedium,
+        titleLarge: headingMedium,
+        titleMedium: headingSmall,
+        titleSmall: labelLarge,
+        labelMedium: labelLarge,
+        headlineLarge: headingLarge,
+        headlineMedium: headingMedium,
+        headlineSmall: headingSmall,
+        bodyLarge: bodyLarge,
+        bodyMedium: bodyMedium,
+        bodySmall: bodySmall,
+        labelLarge: labelLarge,
+        labelSmall: labelSmall,
+      );
 }
