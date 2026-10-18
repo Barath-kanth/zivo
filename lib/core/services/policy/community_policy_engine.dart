@@ -90,6 +90,15 @@ class CommunityPolicyEngine {
       ),
       message: 'Impersonation and fake identity requests are blocked.',
     ),
+    _PolicyRule(
+      id: 'secret_handoff',
+      pattern: RegExp(
+        r"no questions( asked)?|don'?t ask (what('?s| is) (inside|in it)|anything|questions?)|do not ask (what('?s| is) (inside|in it)|anything|questions?)|without asking (anything|questions?)|don'?t (look|open|check) (inside|it)|keep it (secret|discreet)|discreet (delivery|package|parcel)|((parcel|package|envelope|packet).{0,60}(without asking|don'?t ask|do not ask|no questions)|(without asking|don'?t ask|do not ask|no questions).{0,60}(parcel|package|envelope|packet))|கேட்காமல்|අහන්නැතුව|රහස්\s?(පාර්සල්|පැකේජ්)",
+        caseSensitive: false,
+      ),
+      message:
+          'Secret / “no questions” parcel handoffs are not allowed. Describe an ordinary neighbourhood errand, or this request stays blocked.',
+    ),
   ];
 
   static PolicyCheckResult evaluate({

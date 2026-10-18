@@ -69,7 +69,14 @@ const LEXICON: Array<{ id: string; re: RegExp }> = [
   },
   {
     id: 'secret_handoff_en',
-    re: /no questions( asked)?|don'?t ask what('?s| is) (inside|in it)|do not ask what('?s| is) (inside|in it)/i,
+    // Explicit "no questions" + soft euphemisms keyword filters miss
+    // (e.g. "send the parcel without asking anything").
+    re: /no questions( asked)?|don'?t ask (what('?s| is) (inside|in it)|anything|questions?)|do not ask (what('?s| is) (inside|in it)|anything|questions?)|without asking (anything|questions?|what('?s| is) inside)|don'?t (look|open|check) (inside|it)|do not (look|open|check) (inside|it)|keep it (secret|discreet)|discreet (delivery|package|parcel|handoff)|sealed (package|parcel|envelope).{0,40}(don'?t|do not|no)|((parcel|package|envelope|packet).{0,60}(without asking|don'?t ask|do not ask|no questions)|(without asking|don'?t ask|do not ask|no questions).{0,60}(parcel|package|envelope|packet))/i,
+  },
+  {
+    id: 'secret_handoff_ta_si',
+    // Tamil / Sinhala: don't ask / don't look inside / silent handoff
+    re: /கேட்காமல்|என்ன\s?இருக்கு\s?ன்னு\s?கேக்க|உள்ள\s?பார்க்காத|ரகசிய\s?(பார்சல்|பேக்கேஜ்)|අහන්නැතුව|ඇතුළේ\s?මොකක්ද\s?කියලා\s?අහන්න|බලන්නැතුව|රහස්\s?(පාර්සල්|පැකේජ්)/i,
   },
 ];
 
@@ -131,7 +138,7 @@ function mockGeminiStructured(input: SafetyInput, keyword: { allowed: boolean; m
   const text = `${input.title}\n${input.description}`;
   const hasSinhala = /[\u0D80-\u0DFF]/.test(text);
   const euphemism =
-    /discreet|no questions|special (delivery|package)|package pick.?up|කතා නැතුව|රහස්/i.test(
+    /discreet|no questions|without asking|don'?t ask|do not ask|special (delivery|package)|package pick.?up|sealed (package|parcel)|කතා නැතුව|රහස්|අහන්නැතුව|கேட்காமல்/i.test(
       text,
     );
   const block = !keyword.allowed || euphemism;

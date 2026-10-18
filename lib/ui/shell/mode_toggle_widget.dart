@@ -3,7 +3,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hyperlocal/blocs/auth/auth_bloc.dart';
 import 'package:hyperlocal/blocs/mode/mode_cubit.dart';
-import 'package:hyperlocal/core/constants/app_colors.dart';
 import 'package:hyperlocal/core/constants/app_text_styles.dart';
 import 'package:hyperlocal/core/constants/zivo_palette.dart';
 import 'package:hyperlocal/core/router/app_router.dart';
@@ -105,154 +104,183 @@ class ModeToggleWidget extends StatelessWidget {
     }
 
     final targetLabel = modeState is ClientMode ? 'Helper' : 'Client';
+    final palette = ZivoPalette.of(context);
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: AppColors.cardDark,
+      backgroundColor: palette.card,
+      barrierColor: Colors.black.withValues(alpha: 0.55),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.borderColor,
-                  borderRadius: BorderRadius.circular(2),
+      builder: (ctx) {
+        final p = ZivoPalette.of(ctx);
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: p.border,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              'Switch to $targetLabel Mode',
-              style: AppTextStyles.headingMedium,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              modeState is ClientMode
-                  ? 'Find nearby tasks, manage your availability and track your earnings.'
-                  : 'In Client Mode, you can post tasks, fund your wallet, and track helpers in real time.',
-              style: AppTextStyles.bodyMedium,
-            ),
-            const SizedBox(height: 28),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: AppColors.borderColor),
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
+              const SizedBox(height: 24),
+              Text(
+                'Switch to $targetLabel Mode',
+                style: AppTextStyles.headingMedium.copyWith(
+                  color: p.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                modeState is ClientMode
+                    ? 'Find nearby tasks, manage your availability and track your earnings.'
+                    : 'In Client Mode, you can post tasks, fund your wallet, and track helpers in real time.',
+                style: AppTextStyles.bodyMedium.copyWith(
+                  color: p.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 28),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: p.textPrimary,
+                        side: BorderSide(color: p.border),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: Text(
+                        'Cancel',
+                        style: AppTextStyles.bodyLarge
+                            .copyWith(color: p.textPrimary),
                       ),
                     ),
-                    child: Text(
-                      'Cancel',
-                      style: AppTextStyles.bodyLarge
-                          .copyWith(color: AppColors.textSecondary),
-                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      final goingHelper = modeState is ClientMode;
-                      if (goingHelper) {
-                        if (!await requireVerified(
-                          context,
-                          returnTo: AppRoutes.shell,
-                          message:
-                              'Verify your identity before Helper mode. Zivo Admin must approve your documents.',
-                        )) {
-                          return;
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        Navigator.pop(ctx);
+                        final goingHelper = modeState is ClientMode;
+                        if (goingHelper) {
+                          if (!await requireVerified(
+                            context,
+                            returnTo: AppRoutes.shell,
+                            message:
+                                'Verify your identity before Helper mode. Zivo Admin must approve your documents.',
+                          )) {
+                            return;
+                          }
+                          if (!context.mounted) return;
                         }
-                        if (!context.mounted) return;
-                      }
-                      try {
-                        await context.read<ModeCubit>().toggleMode();
-                      } catch (e) {
-                        if (!context.mounted) return;
-                        final msg = e
-                            .toString()
-                            .replaceFirst('AuthException: ', '');
-                        final auth = context.read<AuthBloc>().state;
-                        final needsOnboarding = auth is AuthAuthenticated &&
-                            auth.profile.needsKycForHelper;
-                        showModalBottomSheet(
-                          context: context,
-                          backgroundColor: AppColors.cardDark,
-                          shape: const RoundedRectangleBorder(
-                            borderRadius: BorderRadius.vertical(
-                              top: Radius.circular(24),
+                        try {
+                          await context.read<ModeCubit>().toggleMode();
+                        } catch (e) {
+                          if (!context.mounted) return;
+                          final msg = e
+                              .toString()
+                              .replaceFirst('AuthException: ', '');
+                          final auth = context.read<AuthBloc>().state;
+                          final needsOnboarding = auth is AuthAuthenticated &&
+                              auth.profile.needsKycForHelper;
+                          final errPalette = ZivoPalette.of(context);
+                          showModalBottomSheet(
+                            context: context,
+                            backgroundColor: errPalette.card,
+                            barrierColor:
+                                Colors.black.withValues(alpha: 0.55),
+                            shape: const RoundedRectangleBorder(
+                              borderRadius: BorderRadius.vertical(
+                                top: Radius.circular(24),
+                              ),
                             ),
-                          ),
-                          builder: (sheetCtx) => Padding(
-                            padding:
-                                const EdgeInsets.fromLTRB(24, 20, 24, 32),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Verify identity',
-                                  style: AppTextStyles.headingMedium,
-                                ),
-                                const SizedBox(height: 10),
-                                Text(msg, style: AppTextStyles.bodyMedium),
-                                const SizedBox(height: 20),
-                                SizedBox(
-                                  width: double.infinity,
-                                  child: ElevatedButton(
-                                    onPressed: () {
-                                      Navigator.pop(sheetCtx);
-                                      if (needsOnboarding) {
-                                        context.push(AppRoutes.onboarding);
-                                      }
-                                    },
-                                    child: Text(
-                                      needsOnboarding
-                                          ? 'Start verification'
-                                          : 'OK',
-                                      style: AppTextStyles.buttonLabel
-                                          .copyWith(color: Colors.white),
+                            builder: (sheetCtx) {
+                              final sp = ZivoPalette.of(sheetCtx);
+                              return Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                    24, 20, 24, 32),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Verify identity',
+                                      style: AppTextStyles.headingMedium
+                                          .copyWith(color: sp.textPrimary),
                                     ),
-                                  ),
+                                    const SizedBox(height: 10),
+                                    Text(
+                                      msg,
+                                      style: AppTextStyles.bodyMedium
+                                          .copyWith(
+                                              color: sp.textSecondary),
+                                    ),
+                                    const SizedBox(height: 20),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: ElevatedButton(
+                                        onPressed: () {
+                                          Navigator.pop(sheetCtx);
+                                          if (needsOnboarding) {
+                                            context
+                                                .push(AppRoutes.onboarding);
+                                          }
+                                        },
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: sp.accent,
+                                          foregroundColor: sp.onAccent,
+                                        ),
+                                        child: Text(
+                                          needsOnboarding
+                                              ? 'Start verification'
+                                              : 'OK',
+                                          style: AppTextStyles.buttonLabel
+                                              .copyWith(
+                                                  color: sp.onAccent),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                              ],
-                            ),
-                          ),
-                        );
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: ZivoPalette.of(context).accent,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
+                              );
+                            },
+                          );
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: p.accent,
+                        foregroundColor: p.onAccent,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: Text(
+                        'Switch',
+                        style: AppTextStyles.buttonLabel
+                            .copyWith(color: p.onAccent),
                       ),
                     ),
-                    child: Text(
-                      'Switch',
-                      style: AppTextStyles.buttonLabel
-                          .copyWith(color: Colors.white),
-                    ),
                   ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

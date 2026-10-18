@@ -195,6 +195,8 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
         slivers: [
         _buildCoverHeader(),
         _buildSplitTasksCard(),
+        _buildInstantDispatchCard(),
+        _buildNeighborVouchCard(),
           _buildSectionTitle('What do you need help with?'),
           _buildCategoryGrid(),
           const SliverToBoxAdapter(child: CareNetworkStrip()),
@@ -322,9 +324,8 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           slivers: [
             _buildSectionTitle('Your active tasks'),
             _buildMyTasks(),
-            _buildInstantDispatchCard(),
+            // Instant Dispatch + Neighbor Vouch live on the services column (top).
             _buildStreetBatchCard(),
-            _buildNeighborVouchCard(),
             _buildNearbyHelpersMap(),
             const SliverToBoxAdapter(child: Gap(100)),
           ],
@@ -426,6 +427,9 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
             slivers: [
               _buildCoverHeader(),
               _buildSplitTasksCard(),
+              // Demo-visible near top (were buried / hidden when empty).
+              _buildInstantDispatchCard(),
+              _buildNeighborVouchCard(),
               _buildSectionTitle('What do you need help with?'),
               _buildCategoryGrid(compact: true),
               const SliverToBoxAdapter(child: CareNetworkStrip()),
@@ -440,9 +444,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                   ),
                 ),
               ),
-              _buildInstantDispatchCard(),
               _buildStreetBatchCard(),
-              _buildNeighborVouchCard(),
               _buildNearbyHelpersMap(),
               const SliverToBoxAdapter(child: Gap(100)),
             ],
@@ -793,7 +795,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Find help now',
+                          'Instant Dispatch',
                           style: AppTextStyles.bodySmall.copyWith(
                             fontSize: 13,
                             fontWeight: FontWeight.w700,
@@ -801,7 +803,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                           ),
                         ),
                         Text(
-                          'Review the price, then request a nearby helper',
+                          'Find help now — quote, then match a nearby helper',
                           style: AppTextStyles.bodySmall.copyWith(
                             color: palette.textMuted,
                             fontSize: 11,
@@ -940,7 +942,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
             }
 
             return AlertDialog(
-              title: const Text('Find help now'),
+              title: const Text('Instant Dispatch'),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -1231,135 +1233,211 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   }
 
   Widget _buildNeighborVouchCard() {
+    final palette = ZivoPalette.of(context);
     final needsVouch = _liveHelpers
         .where((h) => h['neighbor_vouched'] != true)
         .toList();
-    if (needsVouch.isEmpty && _liveHelpers.isEmpty) {
-      return const SliverToBoxAdapter(child: SizedBox.shrink());
-    }
-    final target = needsVouch.isNotEmpty
+    final hasHelpers = _liveHelpers.isNotEmpty;
+    final Map<String, dynamic>? target = needsVouch.isNotEmpty
         ? needsVouch.first
-        : _liveHelpers.first;
-    final name = _cleanHelperName(target['full_name']?.toString());
-    final count = target['vouch_count'] ?? 0;
-    final threshold = target['vouch_threshold'] ?? 3;
-    final badged = target['neighbor_vouched'] == true;
+        : (hasHelpers ? _liveHelpers.first : null);
+    final name = target != null
+        ? _cleanHelperName(target['full_name']?.toString())
+        : null;
+    final count = target?['vouch_count'] ?? 0;
+    final threshold = target?['vouch_threshold'] ?? 3;
+    final badged = target?['neighbor_vouched'] == true;
+
+    final String title;
+    final String subtitle;
+    if (!hasHelpers) {
+      title = 'Neighbor Vouch';
+      subtitle =
+          'Stake LKR 200 · 3 local vouches unlock inside-home jobs for helpers';
+    } else if (badged) {
+      title = 'Neighbor Vouch · $name';
+      subtitle = 'Unlocked for inside-home micro-tasks';
+    } else {
+      title = 'Neighbor Vouch · $name ($count/$threshold)';
+      subtitle = 'Stake LKR 200 · 3 local vouches unlock home entry';
+    }
 
     return SliverToBoxAdapter(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+        padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
         child: Material(
-          color: ZivoPalette.of(context).card,
-          borderRadius: BorderRadius.circular(16),
+          color: palette.card,
+          borderRadius: BorderRadius.circular(14),
           child: InkWell(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(14),
             onTap: () {
-              if (!badged) {
+              if (target != null && !badged) {
                 _vouchHelper(target);
-              } else {
+              } else if (target != null && badged) {
                 setState(() => _helperMapExpanded = !_helperMapExpanded);
+              } else {
+                _openNeighborVouchEmpty();
               }
             },
             child: Container(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: ZivoPalette.of(context).border,
-                ),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: palette.border),
               ),
-              child: Column(
+              child: Row(
                 children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: AppColors.accent.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Icon(
-                          badged
-                              ? Icons.verified_user_rounded
-                              : Icons.handshake_rounded,
-                          color: AppColors.accent,
-                        ),
-                      ),
-                      const Gap(12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              badged
-                                  ? 'Neighbor-Vouched · $name'
-                                  : 'Vouch $name ($count/$threshold)',
-                              style: AppTextStyles.headingSmall
-                                  .copyWith(fontSize: 14),
-                            ),
-                            Text(
-                              badged
-                                  ? 'Unlocked for inside-home micro-tasks'
-                                  : 'Stake LKR 200 · 3 local vouches unlock home entry',
-                              style: AppTextStyles.bodySmall.copyWith(
-                                color: ZivoPalette.of(context).textMuted,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (!badged)
-                        Text(
-                          'Vouch',
-                          style: AppTextStyles.capsLabel
-                              .copyWith(color: AppColors.accent),
-                        )
-                      else
-                        Icon(
-                          _helperMapExpanded
-                              ? Icons.expand_less_rounded
-                              : Icons.expand_more_rounded,
-                          color: ZivoPalette.of(context).textMuted,
-                        ),
-                    ],
-                  ),
-                  if (badged) ...[
-                    const Gap(10),
-                    InkWell(
-                      onTap: () => setState(
-                        () => _helperMapExpanded = !_helperMapExpanded,
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.map_outlined,
-                            size: 16,
-                            color: AppColors.helperAccent,
-                          ),
-                          const Gap(6),
-                          Text(
-                            _helperMapExpanded
-                                ? 'Hide map'
-                                : 'Show helpers on map',
-                            style: AppTextStyles.bodySmall.copyWith(
-                              color: AppColors.helperAccent,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: palette.accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                  ],
+                    child: Icon(
+                      badged
+                          ? Icons.verified_user_rounded
+                          : Icons.handshake_rounded,
+                      color: palette.accent,
+                      size: 18,
+                    ),
+                  ),
+                  const Gap(10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: AppTextStyles.bodySmall.copyWith(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: palette.textPrimary,
+                          ),
+                        ),
+                        Text(
+                          subtitle,
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: palette.textMuted,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    !hasHelpers
+                        ? 'Open'
+                        : badged
+                            ? 'Map'
+                            : 'Vouch',
+                    style: AppTextStyles.capsLabel.copyWith(
+                      color: palette.accent,
+                      fontSize: 10,
+                    ),
+                  ),
+                  Icon(Icons.chevron_right_rounded,
+                      size: 18, color: palette.textMuted),
                 ],
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  /// Always-visible entry when no live helpers yet — still demoable.
+  Future<void> _openNeighborVouchEmpty() async {
+    await _refreshLiveHelpers();
+    if (!mounted) return;
+    final needsVouch = _liveHelpers
+        .where((h) => h['neighbor_vouched'] != true)
+        .toList();
+    if (needsVouch.isNotEmpty) {
+      await _vouchHelper(needsVouch.first);
+      return;
+    }
+    if (_liveHelpers.isNotEmpty) {
+      setState(() => _helperMapExpanded = true);
+      return;
+    }
+    if (!mounted) return;
+    final palette = ZivoPalette.of(context);
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: palette.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        final p = ZivoPalette.of(ctx);
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: p.border,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'Neighbor Vouch',
+                style: AppTextStyles.headingMedium.copyWith(
+                  color: p.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Neighbours stake LKR 200 from their wallet to vouch a helper. '
+                'Three local vouches unlock inside-home jobs — trust without '
+                'giving AI control of money.',
+                style: AppTextStyles.bodyMedium.copyWith(
+                  color: p.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'No Available helpers on your block right now. Switch to Helper '
+                'mode on another device/account, or open Instant Dispatch first '
+                'so helpers appear nearby — then tap Neighbor Vouch again.',
+                style: AppTextStyles.bodySmall.copyWith(color: p.textMuted),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _runInstantDispatch();
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: p.accent,
+                    foregroundColor: p.onAccent,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: Text(
+                    'Open Instant Dispatch',
+                    style: AppTextStyles.buttonLabel
+                        .copyWith(color: p.onAccent),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 

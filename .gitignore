@@ -61,3 +61,4 @@ docs/DEMO_VOICEOVER.txt
 docs/DEMO_SCRIPT_PREVIOUS.md
 UI_VIDEO_REDESIGN.md
 scripts/capture-demo-shots.mjs
+demo/*.mp4

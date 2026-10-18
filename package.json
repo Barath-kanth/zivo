@@ -1,0 +1,28 @@
+{
+  "name": "zivo",
+  "version": "1.0.0",
+  "description": "An accessible, resilient neighbourhood-care network for people the digital economy skips: **elders, disabled neighbours, and Tamil- / Sinhala-first speakers** in Sri Lanka. Gemini is the trust-and-safety layer for the informal economy; the marketplace is only the delivery mechanism. Built for the **Google AI Builder Cup 2026** on Google Cloud (project `gcp-ai-builder`).",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "lib": "lib",
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Barath-kanth/zivo.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Barath-kanth/zivo/issues"
+  },
+  "homepage": "https://github.com/Barath-kanth/zivo#readme",
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
+}

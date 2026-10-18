@@ -131,5 +131,19 @@ export function guardChatMessage(raw: string): ChatGuardResult {
     };
   }
 
+  // Secret / “no questions” handoff euphemisms — same floor as task safety lexicon.
+  if (
+    /no questions( asked)?|don'?t ask (what('?s| is) (inside|in it)|anything|questions?)|without asking (anything|questions?)|don'?t (look|open|check) (inside|it)|keep it (secret|discreet)|discreet (delivery|package|parcel)|((parcel|package|envelope|packet).{0,60}(without asking|don'?t ask|do not ask|no questions)|(without asking|don'?t ask|do not ask|no questions).{0,60}(parcel|package|envelope|packet))|கேட்காமல்|අහන්නැතුව/i.test(
+      text,
+    )
+  ) {
+    return {
+      ok: false,
+      code: 'abuse',
+      reason:
+        'Secret / “no questions” parcel talk is not allowed in chat. Keep the job ordinary and on-platform.',
+    };
+  }
+
   return { ok: true };
 }

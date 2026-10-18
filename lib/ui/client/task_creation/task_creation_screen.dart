@@ -1,5 +1,6 @@
 import 'category_task_guide.dart';
 import 'package:hyperlocal/ui/_shared/category_icon.dart';
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -81,9 +82,12 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
   final _picker = ImagePicker();
   final List<Uint8List> _photoBytes = [];
   static const _maxPhotos = 5;
-  /// Background safety only — never shown as a technical panel.
+  /// Keyword + Gemini safety — hard-blocks Continue / Post when true.
   bool _safetyBlocked = false;
   String? _safetyMessage;
+  bool _safetyChecking = false;
+  Timer? _safetyDebounce;
+  int _safetyRequestId = 0;
   List<Map<String, dynamic>> _pricingFields = const [];
   final Map<String, dynamic> _fieldValues = {};
   final Map<String, TextEditingController> _fieldCtrls = {};
@@ -200,13 +204,42 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       description: _descCtrl.text,
     );
     final warning = result.allowed ? null : result.userMessage;
-    if (warning != _livePolicyWarning) {
-      setState(() => _livePolicyWarning = warning);
+    setState(() {
+      _livePolicyWarning = warning;
+      // Instant keyword floor — block Continue immediately (no Gemini wait).
+      if (!result.allowed) {
+        _safetyBlocked = true;
+        _safetyMessage = warning;
+      }
+    });
+    _scheduleSafetyCheck();
+  }
+
+  void _scheduleSafetyCheck() {
+    _safetyDebounce?.cancel();
+    final title = _titleCtrl.text.trim();
+    final desc = _descCtrl.text.trim();
+    if (title.isEmpty && desc.length < 12) {
+      final local = CommunityPolicyEngine.evaluate(
+        title: _titleCtrl.text,
+        description: _descCtrl.text,
+      );
+      if (local.allowed && _safetyBlocked) {
+        setState(() {
+          _safetyBlocked = false;
+          _safetyMessage = null;
+        });
+      }
+      return;
     }
+    _safetyDebounce = Timer(const Duration(milliseconds: 450), () {
+      _runSafetyInBackground();
+    });
   }
 
   @override
   void dispose() {
+    _safetyDebounce?.cancel();
     recordingListenable.removeListener(_onRecordingChanged);
     _titleCtrl.removeListener(_recheckPolicy);
     _descCtrl.removeListener(_recheckPolicy);
@@ -392,6 +425,21 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
   }
 
   Future<void> _runSafetyInBackground() async {
+    final requestId = ++_safetyRequestId;
+    final local = CommunityPolicyEngine.evaluate(
+      title: _titleCtrl.text,
+      description: _descCtrl.text,
+    );
+    if (!local.allowed) {
+      if (!mounted || requestId != _safetyRequestId) return;
+      setState(() {
+        _safetyBlocked = true;
+        _safetyMessage = local.userMessage;
+        _safetyChecking = false;
+      });
+      return;
+    }
+    if (mounted) setState(() => _safetyChecking = true);
     try {
       final safety = await context.read<TaskRepository>().safetyCheck(
             title: _titleCtrl.text.trim().isEmpty
@@ -399,9 +447,11 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                 : _titleCtrl.text.trim(),
             description: _descCtrl.text.trim(),
           );
-      if (!mounted) return;
-      final allowed = safety['allowed'] != false;
+      if (!mounted || requestId != _safetyRequestId) return;
+      final allowed = safety['allowed'] != false &&
+          safety['action']?.toString() != 'block';
       setState(() {
+        _safetyChecking = false;
         _safetyBlocked = !allowed;
         _safetyMessage = allowed
             ? null
@@ -409,7 +459,9 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                 'This request doesn’t meet community guidelines');
       });
     } catch (_) {
-      /* don’t block UX on background check failure */
+      if (!mounted || requestId != _safetyRequestId) return;
+      setState(() => _safetyChecking = false);
+      /* keep last keyword verdict; don’t clear a hard block on network blip */
     }
   }
 
@@ -2811,8 +2863,9 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                   builder: (context, state) {
                     final loading = state is TaskLoading;
             final isReview = _step == 3;
-            final disabled = isReview &&
-                (loading || _quoting || _priceQuote == null);
+            final safetyLocks = _safetyBlocked || _livePolicyWarning != null;
+            final disabled = safetyLocks ||
+                (isReview && (loading || _quoting || _priceQuote == null));
 
                     return SizedBox(
                       width: double.infinity,
@@ -2827,9 +2880,12 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                         }
                       },
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: color,
+                          backgroundColor:
+                              safetyLocks ? AppColors.errorColor : color,
                           foregroundColor: ZivoPalette.of(context).onAccent,
-                  disabledBackgroundColor: ZivoPalette.of(context).border,
+                  disabledBackgroundColor: safetyLocks
+                      ? AppColors.errorColor.withValues(alpha: 0.55)
+                      : ZivoPalette.of(context).border,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                           shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
@@ -2846,11 +2902,13 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                         ),
                               )
                             : Text(
-                        isReview
-                            ? 'Post Task — ${AppConfig.money(total)}'
-                            : _step == 1
-                                ? 'Continue — Add Location'
-                                : 'Continue — Fair price',
+                        safetyLocks
+                            ? 'Blocked — change the description'
+                            : isReview
+                                ? 'Post Task — ${AppConfig.money(total)}'
+                                : _step == 1
+                                    ? 'Continue — Add Location'
+                                    : 'Continue — Fair price',
                         style: AppTextStyles.buttonLabel.copyWith(
                           color: Colors.white,
                           fontSize: 14,
@@ -2859,17 +2917,48 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                       ),
                     );
                   },
-        ),
+                ),
       ),
     );
   }
 
-  void _onNext() {
+  Future<void> _onNext() async {
     if (_step == 1) {
-      if (_formKey.currentState?.validate() ?? false) {
-        _runSafetyInBackground();
-        setState(() => _step = 2);
+      if (!(_formKey.currentState?.validate() ?? false)) return;
+
+      final policy = CommunityPolicyEngine.evaluate(
+        title: _titleCtrl.text,
+        description: _descCtrl.text,
+      );
+      if (!policy.allowed) {
+        setState(() {
+          _safetyBlocked = true;
+          _safetyMessage = policy.userMessage;
+          _livePolicyWarning = policy.userMessage;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              policy.userMessage ?? 'This request isn’t allowed on Zivo',
+            ),
+            backgroundColor: AppColors.errorColor,
+          ),
+        );
+        return;
       }
+
+      await _runSafetyInBackground();
+      if (!mounted) return;
+      if (_safetyBlocked) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_safetyMessage ?? 'This request can’t be posted'),
+            backgroundColor: AppColors.errorColor,
+          ),
+        );
+        return;
+      }
+      setState(() => _step = 2);
     } else if (_step == 2) {
       if (_pickedLocation == null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2877,6 +2966,19 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
         );
         return;
       }
+      if (_safetyBlocked || _livePolicyWarning != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_safetyMessage ??
+                _livePolicyWarning ??
+                'This request can’t be posted'),
+            backgroundColor: AppColors.errorColor,
+          ),
+        );
+        return;
+      }
+      await _runSafetyInBackground();
+      if (!mounted) return;
       if (_safetyBlocked) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
